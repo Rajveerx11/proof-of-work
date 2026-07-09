@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proof-of-Work — Tech Stack &amp; Technical Requirements</title>
+<style>
+  :root{
+    --bg:#0b0e14; --bg2:#111621; --card:#151b28; --card2:#1a2233;
+    --line:#243044; --ink:#e8edf6; --sub:#9fb0c8; --mut:#6b7c96;
+    --acc:#6ee7ff; --acc2:#a78bfa; --go:#34d399; --warn:#fbbf24; --bad:#fb7185; --gold:#ffd77a;
+    --grad:linear-gradient(135deg,#6ee7ff 0%,#a78bfa 55%,#34d399 100%);
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#1a2338 0%,transparent 60%),var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.52;font-size:14px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  a{color:var(--acc)}
+  h1,h2,h3,h4{line-height:1.16;margin:0}
+  .mono{font-family:var(--mono)}
+  b{color:var(--ink)}
+  code{font-family:var(--mono);font-size:.92em;color:var(--acc);background:rgba(110,231,255,.08);padding:1px 5px;border-radius:5px}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--sub);background:var(--bg2)}
+
+  header.hero{padding:54px 0 30px;border-bottom:1px solid var(--line)}
+  .hero .eyebrow{font-family:var(--mono);color:var(--acc);letter-spacing:.14em;font-size:11px;text-transform:uppercase}
+  .hero h1{font-size:clamp(25px,4.2vw,40px);font-weight:800;letter-spacing:-.02em;margin:13px 0 10px}
+  .hero h1 .g{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lede{font-size:clamp(14px,1.7vw,16px);color:var(--sub);max-width:740px}
+  .metastrip{display:flex;flex-wrap:wrap;gap:9px;margin-top:20px}
+  .metastrip .pill{background:var(--card)}
+
+  section{padding:36px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-family:var(--mono);color:var(--acc2);letter-spacing:.12em;text-transform:uppercase;font-size:11px;margin-bottom:9px}
+  h2.sec{font-size:clamp(19px,2.6vw,25px);font-weight:800;letter-spacing:-.01em;margin-bottom:8px}
+  .sublede{color:var(--sub);max-width:740px;margin-bottom:20px;font-size:13.5px}
+
+  /* stack table */
+  .tblwrap{overflow-x:auto}
+  table.stack{width:100%;border-collapse:collapse;font-size:12.8px;min-width:680px}
+  table.stack th,table.stack td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  table.stack th{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);font-weight:600}
+  table.stack td.cat{color:var(--mut);white-space:nowrap;font-size:12px}
+  table.stack td.pick{font-weight:700}
+  table.stack td.pick .v{color:#8ff0cb;font-family:var(--mono);font-size:12px}
+  table.stack td.why{color:var(--sub)}
+  table.stack td.got{color:#c9a96b;font-size:11.5px}
+
+  .layerpill{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:6px}
+  .lp-free{background:rgba(52,211,153,.16);color:#7ff0c4}
+  .lp-paid{background:rgba(167,139,250,.16);color:#c9b8ff}
+
+  /* two-layer detector */
+  .det{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .det .col{border:1px solid var(--line);border-radius:13px;padding:16px 18px}
+  .det .l1{background:linear-gradient(180deg,rgba(52,211,153,.08),transparent);border-color:rgba(52,211,153,.35)}
+  .det .l2{background:linear-gradient(180deg,rgba(251,191,36,.06),transparent);border-color:rgba(251,191,36,.3)}
+  .det h3{font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+  .det .role{font-family:var(--mono);font-size:10px;color:var(--mut);margin-bottom:10px}
+  .det ul{margin:0;padding-left:16px;color:var(--sub);font-size:12.5px;line-height:1.65}
+  .det ul b{color:var(--ink)}
+
+  /* self-improve loop stages */
+  .loop{display:flex;flex-direction:column;gap:0}
+  .stage{position:relative;border:1px solid var(--line);border-radius:13px;padding:15px 18px 15px 56px;background:var(--card);margin-bottom:10px}
+  .stage .num{position:absolute;left:14px;top:15px;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;
+    font-family:var(--mono);font-weight:800;font-size:13px;background:var(--grad);color:#0b0e14}
+  .stage h4{font-size:14px;margin-bottom:4px}
+  .stage p{margin:0;color:var(--sub);font-size:12.8px}
+  .stage.gate{border-color:rgba(251,191,36,.5);background:linear-gradient(135deg,rgba(251,191,36,.09),transparent)}
+  .stage .down{position:absolute;left:26px;bottom:-9px;color:var(--mut);font-size:13px}
+  .gaterule{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .grchip{font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid rgba(52,211,153,.4);background:rgba(52,211,153,.07);color:#8ff0cb}
+  .grchip.and{color:var(--mut);border-color:var(--line);background:transparent}
+
+  .keybox{background:linear-gradient(135deg,rgba(167,139,250,.09),transparent);border:1px solid var(--line);border-left:3px solid var(--acc2);border-radius:11px;padding:14px 16px;margin-top:16px;font-size:13px;color:var(--sub)}
+  .keybox b{color:var(--ink)}
+
+  /* logging tiers */
+  .tiers{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .tier{border:1px solid var(--line);border-radius:13px;padding:16px 18px}
+  .tier.t1{background:linear-gradient(180deg,rgba(52,211,153,.07),transparent);border-color:rgba(52,211,153,.35)}
+  .tier.t2{background:linear-gradient(180deg,rgba(167,139,250,.08),transparent);border-color:rgba(167,139,250,.35)}
+  .tier h3{font-size:14px;margin-bottom:3px}
+  .tier .sub{font-family:var(--mono);font-size:10px;color:var(--mut);margin-bottom:10px}
+  .tier ul{margin:0;padding-left:16px;color:var(--sub);font-size:12.5px;line-height:1.7}
+  .tier ul b{color:var(--ink)}
+  .envelope{font-family:var(--mono);font-size:11px;color:#a9ecff;background:#0a0d13;border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-top:6px;line-height:1.6;white-space:pre;overflow-x:auto}
+
+  /* requirements */
+  .reqs{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .reqcol{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--card)}
+  .reqcol h3{font-size:13.5px;margin-bottom:10px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--acc2)}
+  .req{display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-bottom:1px dashed var(--line);font-size:12.7px;color:var(--sub)}
+  .req:last-child{border-bottom:0}
+  .req .rid{font-family:var(--mono);font-size:10px;color:var(--mut);flex:0 0 42px;padding-top:1px}
+  .req b{color:var(--ink)}
+
+  /* repo tree */
+  .tree{font-family:var(--mono);font-size:12px;color:var(--sub);background:#0a0d13;border:1px solid var(--line);border-radius:11px;padding:16px 18px;line-height:1.7;overflow-x:auto;white-space:pre}
+  .tree .d{color:#a9ecff} .tree .c{color:var(--mut)} .tree .s{color:#8ff0cb}
+
+  /* flow */
+  .flow{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .node{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:11.5px;font-family:var(--mono);white-space:nowrap;text-align:center}
+  .node.in{border-color:rgba(167,139,250,.5);color:#c9b8ff}
+  .node.p{border-color:rgba(110,231,255,.5);color:#a9ecff;font-weight:700}
+  .node.out{border-color:rgba(52,211,153,.5);color:#8ff0cb}
+  .arr{color:var(--mut);font-size:14px}
+
+  /* risk */
+  table.risk{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.risk th,table.risk td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  table.risk th{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);font-weight:600}
+  table.risk td.r{color:#ffb2ba;font-weight:600}
+  table.risk td.f{color:var(--sub)}
+  table.risk td.f b{color:#7ff0c4}
+
+  .callout{background:var(--bg2);border:1px dashed var(--line);border-radius:10px;padding:12px 15px;color:var(--sub);font-size:12.5px;margin-top:14px}
+  .callout.warn{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.05)}
+  footer{padding:30px 0 60px;color:var(--mut);font-size:11.5px}
+  footer .src-note{font-family:var(--mono);line-height:1.85}
+
+  @media(max-width:860px){ .det,.tiers,.reqs{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Open-source build · finalized engineering spec</div>
+    <h1><span class="g">Proof-of-Work</span><br>tech stack &amp; technical requirements</h1>
+    <p class="lede">Every technical decision, finalized and current for July 2026 — the stack, the self-improving loop that gets sharper every run, and the tamper-proof logging that records every finding. Choices are decided, not options.</p>
+    <div class="metastrip">
+      <span class="pill">Python engine</span>
+      <span class="pill">Self-improving detector</span>
+      <span class="pill">Tamper-evident log</span>
+      <span class="pill">2 engineers · verified 2026</span>
+    </div>
+  </div>
+</header>
+
+<!-- FINALIZED STACK -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Decision 1 · the build stack</div>
+    <h2 class="sec">The finalized stack</h2>
+    <p class="sublede">One choice per layer, each verified against current (July 2026) versions. Bottom line: <b>Python engine + tree-sitter (+ stdlib ast) + Docker-local / microVM-hosted + pytest·coverage.py / Vitest·v8 + git subprocess + official <code>mcp</code> SDK + uv/PyPI + SQLite.</b></p>
+    <div class="tblwrap">
+    <table class="stack">
+      <thead><tr><th>Layer</th><th>Decision</th><th>Why</th><th>Watch out</th></tr></thead>
+      <tbody>
+        <tr><td class="cat">Engine language</td><td class="pick"><span class="v">Python 3.12+</span></td><td class="why">Native access to pytest/coverage internals, most mature MCP SDK, first-class tree-sitter, fastest solo dev loop.</td><td class="got">No single binary — solved by uv/pipx below.</td></tr>
+        <tr><td class="cat">Code parsing (detector)</td><td class="pick"><span class="v">tree-sitter-language-pack</span> + stdlib <code>ast</code></td><td class="why">One uniform parser across Python + JS/TS (306 grammars, actively maintained); stdlib <code>ast</code> for deep Python-only checks.</td><td class="got">It's a syntax tree, not semantic — tamper checks are strong heuristics, not proofs. Pin versions (API churn).</td></tr>
+        <tr><td class="cat">Isolation (run tests)</td><td class="pick"><span class="v">Docker (local)</span> · <span class="v">microVM (hosted)</span></td><td class="why">A container is fine for your own local code; hosted mode running others' code needs a real guest kernel (E2B/Firecracker or microsandbox).</td><td class="got">This is the one true architectural fork → hide behind a <code>Sandbox</code> interface. Reject WASM (can't run real test deps).</td></tr>
+        <tr><td class="cat">Tests + coverage</td><td class="pick"><span class="v">pytest + coverage.py 7.15</span> · <span class="v">Vitest 3 + v8</span></td><td class="why">Machine-readable JSON output for both; Vitest v8 now matches Istanbul accuracy at 3–5× speed.</td><td class="got">Also detect existing Jest projects. Coverage-drop needs a stored baseline — parse JSON, never scrape text.</td></tr>
+        <tr><td class="cat">Git diff access</td><td class="pick"><span class="v">shell out to <code>git</code></span> plumbing</td><td class="why">Every repo already has git; output matches exactly, no build dependency.</td><td class="got">Use <code>-z</code> NUL separators, disable color/pager, stick to plumbing commands for stable output.</td></tr>
+        <tr><td class="cat">MCP server</td><td class="pick"><span class="v">official <code>mcp</code> SDK 1.28.1</span> (FastMCP)</td><td class="why">Current stable, production-recommended; expose one tool with <code>@mcp.tool()</code>.</td><td class="got">A v2 rename lands ~late-July 2026 — wall all MCP code behind one thin module so migration is a one-file change.</td></tr>
+        <tr><td class="cat">Packaging / install</td><td class="pick"><span class="v">uv + PyPI</span> (<code>uvx proof-of-work</code>)</td><td class="why">10–100× faster than pipx, zero-install runs; PyPI publish keeps pipx users working too.</td><td class="got">Skip single-binary until users demand offline. Ship a pre-commit hook + a composite GitHub Action.</td></tr>
+        <tr><td class="cat">Local storage</td><td class="pick"><span class="v">SQLite (stdlib), WAL mode</span></td><td class="why">Zero-dependency single file, perfect for append-only run logs + coverage baselines.</td><td class="got">Hook + CI can write at once → enable WAL and a <code>busy_timeout</code> to avoid locks.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<!-- TWO-LAYER DETECTOR -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Decision 2 · the detector</div>
+    <h2 class="sec">Two layers — only the deterministic one is trusted</h2>
+    <p class="sublede">Facts get signed; opinions stay advisory. This split is what makes the whole record reproducible and un-poisonable — the AI never decides the verdict.</p>
+    <div class="det">
+      <div class="col l1">
+        <h3>🟢 Layer 1 — deterministic signatures</h3>
+        <div class="role">THE VERDICT · signed &amp; logged · engine = git-diff + coverage delta + Semgrep + mutation testing</div>
+        <ul>
+          <li><b>Test-integrity diff</b> — tests deleted, renamed, or <code>@skip</code>/<code>xfail</code> added vs baseline.</li>
+          <li><b>Fake-pass</b> — <code>sys.exit(0)</code>, patched test runner, coverage disabled, function-under-test mocked away.</li>
+          <li><b>Coverage delta</b> — tests still "pass" but cover much less code than the baseline.</li>
+          <li><b>Mutation testing</b> (mutmut / Stryker) — the real fix for <b>semantically gutted-but-present asserts</b> that syntax checks miss: introduce a bug, confirm a test actually fails. <span style="color:var(--gold)">Roast-added — the strongest signal.</span></li>
+          <li><b>Assert-weakening (heuristic)</b> — <code>assert True</code>, removed assertions. Syntactic only; a helper, not a proof.</li>
+        </ul>
+      </div>
+      <div class="col l2">
+        <h3>🟡 Layer 2 — LLM judge</h3>
+        <div class="role">ADVISORY ONLY · never signed · engine = DeepEval-style scorer</div>
+        <ul>
+          <li>Reads the diff and asks "does this weaken verification / miss the task?"</li>
+          <li>Used to <b>triage</b> suspicious cases for review and to <b>propose</b> new rules — nothing more.</li>
+          <li>Its opinion is logged as <b>metadata</b>, never as the verdict.</li>
+          <li>Bring-your-own-key, so it costs the project nothing.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="keybox">🔒 <b>Why this matters:</b> only Layer 1's deterministic output goes into the signed log. Because the record is deterministic, anyone can re-run it and get the same answer — and no one can poison the tool by gaming a non-deterministic AI judge.</div>
+  </div>
+</section>
+
+<!-- SELF-IMPROVING LOOP -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Decision 3 · the self-improving loop ★ your request</div>
+    <h2 class="sec">How it gets sharper every run</h2>
+    <div class="callout warn" style="margin-bottom:16px">🗓️ <b>Roast correction — this is a v2, not v1.</b> The council was unanimous: build the deterministic core first (Decisions 1–2), ship it, and let the corpus grow as a <i>byproduct</i> of real runs. The loop below is the plan for <b>after</b> the core has users — not week one. And name it honestly: it's a <b>monotonically-growing net for known lazy-agent cheat patterns</b>, not a measurable "catch-rate" (you can't measure cheats you never see). See the full verdict at the bottom.</div>
+    <p class="sublede">The feature, when it comes, follows a published blueprint (Self-Harness, 2026): <b>mine failures → propose a fix → gate it hard → only then promote.</b> Golden rule: the loop can only ever <b>ADD</b> detection power — coverage never silently shrinks.</p>
+    <div class="loop">
+      <div class="stage">
+        <div class="num">1</div>
+        <h4>Capture — every run writes what happened</h4>
+        <p>Verdict, which rules fired, a confirmed-clean run, a human override, or a cheat caught later (a bug that slipped past a "clean" verdict). Each signal is tagged by trust level and written to the tamper-proof log.</p>
+        <div class="down">↓</div>
+      </div>
+      <div class="stage">
+        <div class="num">2</div>
+        <h4>Propose — mine the log for new cheat patterns</h4>
+        <p>A batch job clusters confirmed cheats that <b>no existing rule catches</b>, and the LLM <b>drafts</b> a new Semgrep rule from those real examples. The AI only drafts — it has zero authority to ship it.</p>
+        <div class="down">↓</div>
+      </div>
+      <div class="stage gate">
+        <div class="num">3</div>
+        <h4>🚦 Safety gate — the heart of "harnessed, not self-disabling"</h4>
+        <p>The candidate is tested against two <b>frozen, signed</b> corpora before it can ship. <span style="color:var(--gold)">Roast fix: dropped the vacuous "0% regression" clause — added Semgrep rules can't <i>un</i>-catch a positive, so that check never rejects anything. The real gate is FP-based:</span></p>
+        <div class="gaterule">
+          <span class="grchip">catches ≥1 NEW cheat</span>
+          <span class="grchip and">AND</span>
+          <span class="grchip">per-rule FP ≤1% (Wilson bound)</span>
+          <span class="grchip and">AND</span>
+          <span class="grchip">AGGREGATE FP stays under budget</span>
+        </div>
+        <div class="down">↓</div>
+      </div>
+      <div class="stage">
+        <div class="num">4</div>
+        <h4>Version &amp; deploy — reversible, with garbage collection</h4>
+        <p>The rule gets an id + semver + provenance hash, a signed git commit, and shadow-runs for N runs before it changes a real verdict. Rollback = <code>git revert</code>. <span style="color:var(--gold)">Roast fix: "add-only" needs rule GC or FPs and runtime grow forever</span> — so a new rule that <b>subsumes</b> an old one retires it <i>automatically</i>, but only when the frozen corpus confirms zero coverage is lost. Any change that would actually <i>reduce</i> coverage still needs a human two-key.</p>
+        <div class="down">↓</div>
+      </div>
+      <div class="stage">
+        <div class="num">5</div>
+        <h4>Measure — honestly</h4>
+        <p>The harness tracks <b>precision + FP rate on the frozen corpora</b> and <b>coverage of known cheat classes</b> per iteration. <span style="color:var(--gold)">Roast fix: you cannot measure true "catch-rate" solo</span> — the cheats you miss are unlabeled by definition. So don't claim recall on unknowns; claim "grows the net over known patterns, keeps FPs bounded." Ground truth must be human/synthetic-anchored, never LLM-labeled, or the judge leaks into the signed verdict.</p>
+      </div>
+    </div>
+    <div class="callout warn">🛡️ <b>Anti-poisoning (an attacker teaching it to ignore a cheat):</b> the loop may only <b>add</b> power — it can never auto-disable a check or add an exclusion. The regression corpus is frozen and signed, so even a fully poisoned input stream can't promote a rule that lets a known cheat through. Only deterministic "caught-later" and oracle signals create ground truth; human and AI labels are advisory and quarantined.</div>
+  </div>
+</section>
+
+<!-- LOGGING -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Decision 4 · logging every finding, provably</div>
+    <h2 class="sec">Tamper-evident record — one format, two tiers</h2>
+    <p class="sublede">Every run emits the same envelope — an <b>in-toto attestation in a DSSE wrapper</b> (the 2026 standard shared by Sigstore, SLSA, cosign). Because local and hosted records are byte-identical, upgrading tiers is a config change, not a rewrite.</p>
+    <div class="envelope">DSSE ⟶ in-toto Statement {
+  subject:   sha256(changeset),
+  predicate: { verdict, cheats_caught:[rule_ids],
+               tool_version, ruleset_version,
+               corpus_version, timestamp } }</div>
+    <div class="tiers" style="margin-top:16px">
+      <div class="tier t1">
+        <h3>🟢 Tier 1 — Local &amp; free <span class="layerpill lp-free">DEFAULT</span></h3>
+        <div class="sub">hash-chained SQLite + Merkle head, signed</div>
+        <ul>
+          <li>Each row links to the previous by <b>SHA-256 hash chain</b> — edit any past row and the chain breaks.</li>
+          <li>Hashes fold into a <b>Merkle Mountain Range</b> → one small signed "head" that commits to all history.</li>
+          <li>Head signed with <b>minisign / cosign</b>.</li>
+          <li><b>Honest limit:</b> local key + local file is tamper-<i>evident</i>, not tamper-<i>proof</i> — so we periodically post just the signed head to an outside anchor (a gist / CI artifact / Rekor). Near-zero cost.</li>
+        </ul>
+      </div>
+      <div class="tier t2">
+        <h3>🟣 Tier 2 — Hosted &amp; un-forgeable <span class="layerpill lp-paid">PAID</span></h3>
+        <div class="sub">cosign keyless + Rekor v2 transparency log</div>
+        <ul>
+          <li><b>cosign keyless signing</b> (OIDC identity, short-lived cert) — no long-lived key to steal.</li>
+          <li>Each attestation pushed to <b>Rekor v2</b> (GA, tile-backed) → public inclusion proof, third-party auditable, cross-repo.</li>
+          <li>This is the moat: a manager gets an <b>un-forgeable proof</b> that agent code was checked, across every repo and every vendor.</li>
+          <li><b>Self-hosted option:</b> run <b>Trillian Tessera</b> to own the log on-prem.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout">Avoid: Amazon QLDB (shut down Jul 2025) and Trillian v1 (maintenance mode). Tessera / Rekor v2 are the live successors.</div>
+  </div>
+</section>
+
+<!-- TECHNICAL REQUIREMENTS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">The spec</div>
+    <h2 class="sec">Technical requirements</h2>
+    <p class="sublede">What v1 must do (functional) and how it must behave (non-functional). These are the acceptance bar.</p>
+    <div class="reqs">
+      <div class="reqcol">
+        <h3>Functional</h3>
+        <div class="req"><span class="rid">F-1</span><span>Run the project's real tests in <b>isolation</b> and read the true result — never trust the agent's word.</span></div>
+        <div class="req"><span class="rid">F-2</span><span>Detect the core cheats deterministically: <b>deleted/skipped tests, weakened asserts, fake pass, coverage drop, mocked-away logic.</b></span></div>
+        <div class="req"><span class="rid">F-3</span><span>Run a <b>frozen held-out test bank</b> the agent never saw and flag disagreement.</span></div>
+        <div class="req"><span class="rid">F-4</span><span>Return a structured <code>pass / fail + reasons</code> the agent (or CI) can branch on.</span></div>
+        <div class="req"><span class="rid">F-5</span><span>Ship as <b>CLI, git hook, GitHub Action, and MCP tool</b> — one engine behind all four.</span></div>
+        <div class="req"><span class="rid">F-6</span><span>Support <b>Python + JS/TS</b> at v1; add languages via new grammars + rules.</span></div>
+        <div class="req"><span class="rid">F-7</span><span><b>Self-improve</b> each run through the gated loop (Decision 3).</span></div>
+        <div class="req"><span class="rid">F-8</span><span>Write every finding to the <b>tamper-evident log</b> (Decision 4).</span></div>
+      </div>
+      <div class="reqcol">
+        <h3>Non-functional</h3>
+        <div class="req"><span class="rid">N-1</span><span><b>Deterministic verdict</b> — same input, same signed output, re-runnable by anyone.</span></div>
+        <div class="req"><span class="rid">N-2</span><span><b>Human-wired gate</b> — the agent can't skip it or reinterpret the result.</span></div>
+        <div class="req"><span class="rid">N-3</span><span><b>Fast</b> — the deterministic scan runs in seconds; the loop's learning is a background batch job, off the hot path.</span></div>
+        <div class="req"><span class="rid">N-4</span><span><b>Reversible</b> — every rule change is a signed commit; rollback is one command.</span></div>
+        <div class="req"><span class="rid">N-5</span><span><b>Coverage never silently shrinks</b> — the loop can only add checks; reducing them needs a human two-key.</span></div>
+        <div class="req"><span class="rid">N-6</span><span><b>Zero-friction install</b> — <code>uvx proof-of-work</code>, no account, works offline for the local tier.</span></div>
+        <div class="req"><span class="rid">N-7</span><span><b>Isolation swappable</b> — Docker/microVM/gVisor behind one <code>Sandbox</code> interface.</span></div>
+        <div class="req"><span class="rid">N-8</span><span><b>MCP churn contained</b> — all SDK calls behind one module.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE / REPO -->
+<section>
+  <div class="wrap">
+    <div class="kicker">How it's laid out</div>
+    <h2 class="sec">Component map &amp; repo structure</h2>
+    <div class="flow" style="margin-bottom:18px">
+      <span class="node in">front doors<br>CLI · hook · Action · MCP</span><span class="arr">→</span>
+      <span class="node p">core engine<br>runner + detector</span><span class="arr">→</span>
+      <span class="node">Sandbox driver<br>(Docker / microVM)</span><span class="arr">→</span>
+      <span class="node out">signed verdict<br>→ log</span>
+      <span class="arr">⟳</span>
+      <span class="node">learn loop<br>(batch)</span>
+    </div>
+    <div class="tree"><span class="d">proof-of-work/</span>
+├── <span class="d">core/</span>          <span class="c"># the one engine everything shares</span>
+│   ├── runner.py     <span class="c"># run tests in isolation, read result</span>
+│   ├── detector/     <span class="c"># Layer 1 signatures (Semgrep + git-diff)</span>
+│   ├── oracle.py     <span class="c"># frozen held-out randomized tests</span>
+│   └── sandbox/      <span class="c"># Sandbox interface + Docker/microVM drivers</span>
+├── <span class="d">rules/</span>         <span class="c"># versioned, signed Semgrep rules (auto-grows)</span>
+├── <span class="d">learn/</span>         <span class="c"># mine → propose → gate → promote (batch)</span>
+│   └── corpora/      <span class="c"># frozen regression + clean sets (signed)</span>
+├── <span class="d">log/</span>           <span class="c"># DSSE envelopes, hash chain, Merkle head</span>
+├── <span class="d">judge/</span>         <span class="c"># Layer 2 LLM judge (advisory, BYO-key)</span>
+├── <span class="d">interfaces/</span>    <span class="c"># cli.py · precommit · action.yml · </span><span class="s">mcp_server.py</span>
+└── <span class="d">eval/</span>          <span class="c"># catch-rate harness, per-iteration metrics</span></div>
+    <div class="callout">The <code>interfaces/</code> layer is thin — it just calls <code>core/</code>. The <code>mcp_server.py</code> is the single file walled off from the coming MCP v2 rename.</div>
+  </div>
+</section>
+
+<!-- RISKS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Straight talk</div>
+    <h2 class="sec">Hardest technical risks — and the answer</h2>
+    <table class="risk">
+      <thead><tr><th>Risk</th><th>How the design handles it</th></tr></thead>
+      <tbody>
+        <tr><td class="r">Correctness can't be fully verified (the "verification horizon")</td><td class="f">Never sign "this is correct." Only sign "<b>these specific checks passed/failed.</b>" The detector is a strong filter, not an oracle.</td></tr>
+        <tr><td class="r">AST checks are heuristic — a determined agent can evade them</td><td class="f">Defense in depth: the authoritative signal is <b>re-running tests + comparing coverage</b>; the AST patterns are the extra net, not the whole net.</td></tr>
+        <tr><td class="r">Local log is re-forgeable with disk + key access</td><td class="f">Periodically <b>anchor the signed head externally</b> (gist / CI / Rekor). Tier 2 removes the local key entirely (keyless).</td></tr>
+        <tr><td class="r">False-positive fatigue → humans disable the tool</td><td class="f">The <b>Wilson-bounded FP gate</b> plus "loop can only add power" keep noise down; a bad rule can never ship silently.</td></tr>
+        <tr><td class="r">Poisoning the learning signal</td><td class="f">Frozen signed regression corpus + asymmetric authority (add-only) + label provenance tiers. Poisoning training can't beat an immutable test.</td></tr>
+        <tr><td class="r">MCP SDK v2 breaking change (~late Jul 2026)</td><td class="f">All MCP code behind <code>interfaces/mcp_server.py</code> — the migration is a one-file edit.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warn">🎯 <b>The through-line:</b> Proof-of-Work applies its own thesis to itself — no change (even to its own rules) is trusted until it's gated against frozen ground truth. That's why it can safely get smarter every run without ever quietly getting weaker.</div>
+  </div>
+</section>
+
+<!-- ROAST VERDICT -->
+<section id="roast">
+  <div class="wrap">
+    <div class="kicker">The council reviewed this architecture · 5 personas + Judge</div>
+    <h2 class="sec">🔥 The Roast — verdict on this spec</h2>
+    <p class="sublede">I put this finalized architecture through the <span class="mono">/roast</span> council. It caught real logic bugs, not just opinions — the corrections above (marked in gold) come straight from it.</p>
+
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:linear-gradient(135deg,rgba(251,191,36,.14),rgba(52,211,153,.06));border:1px solid rgba(251,191,36,.45);border-radius:16px;padding:20px 24px;margin-bottom:18px">
+      <div style="font-family:var(--mono);font-weight:800;font-size:24px;color:var(--gold)">RESHAPE → SCOPE DOWN</div>
+      <div style="height:24px;width:1px;background:var(--line)"></div>
+      <div style="font-family:var(--mono);font-size:12px;color:var(--sub)">Confidence: <b style="color:var(--ink)">HIGH</b></div>
+      <div style="flex:1;min-width:260px;color:var(--sub);font-size:13px">The <b style="color:var(--ink)">stack choices are right</b> and the <b style="color:var(--ink)">moat is real</b> — but as specified it's a cathedral a solo dev won't ship. Cut to the deterministic core; the loop and crypto are v2+.</div>
+    </div>
+
+    <div class="kicker" style="margin:4px 0 10px">Scorecard · avg 5.4 / 10</div>
+    <div style="display:grid;gap:7px;margin-bottom:20px">
+      <div class="fstep" style="display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div style="flex:0 0 150px"><b style="font-size:12.5px">😈 Contrarian</b> <span style="color:var(--sub);font-size:11.5px">cathedral over a 200-line script</span></div><div style="flex:1"><span class="bar" style="width:30%;background:var(--bad);height:8px"></span></div><div style="font-family:var(--mono);color:var(--bad)">3</div></div>
+      <div class="fstep" style="display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div style="flex:0 0 150px"><b style="font-size:12.5px">🔨 Builder</b> <span style="color:var(--sub);font-size:11.5px">core=8, the rest overruns a month</span></div><div style="flex:1"><span class="bar" style="width:30%;background:var(--bad);height:8px"></span></div><div style="font-family:var(--mono);color:var(--bad)">3</div></div>
+      <div class="fstep" style="display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div style="flex:0 0 150px"><b style="font-size:12.5px">🧮 Logician</b> <span style="color:var(--sub);font-size:11.5px">vacuous gate + unmeasurable metric</span></div><div style="flex:1"><span class="bar" style="width:50%;background:var(--warn);height:8px"></span></div><div style="font-family:var(--mono);color:var(--warn)">5</div></div>
+      <div class="fstep" style="display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div style="flex:0 0 150px"><b style="font-size:12.5px">🔎 Researcher</b> <span style="color:var(--sub);font-size:11.5px">choices spot-on; win on DX not novelty</span></div><div style="flex:1"><span class="bar" style="width:80%;background:var(--go);height:8px"></span></div><div style="font-family:var(--mono);color:var(--go)">8</div></div>
+      <div class="fstep" style="display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div style="flex:0 0 150px"><b style="font-size:12.5px">🚀 Expansionist</b> <span style="color:var(--sub);font-size:11.5px">corpus + attestation = category moat</span></div><div style="flex:1"><span class="bar" style="width:80%;background:var(--go);height:8px"></span></div><div style="font-family:var(--mono);color:var(--go)">8</div></div>
+    </div>
+
+    <!-- ship vs defer -->
+    <div class="tiers">
+      <div class="tier t1">
+        <h3>✅ SHIP in v1 (the 2-week core)</h3>
+        <div class="sub">this is a solid 8–9/10 on its own</div>
+        <ul>
+          <li>Deterministic detector: <b>git-diff + coverage delta + <code>sys.exit</code>/skip checks + mutation testing</b></li>
+          <li><b>CLI + git pre-commit hook + GitHub Action</b> (3 surfaces)</li>
+          <li><b>Local hash-chained SQLite log</b> (prev-hash + signed head) — ~40 lines</li>
+          <li>Layer 2 LLM judge — <b>advisory only</b>, BYO-key</li>
+        </ul>
+      </div>
+      <div class="tier t2">
+        <h3>🕓 DEFER (v2+ / when there are users)</h3>
+        <div class="sub">each is its own subproject — none has a week-one user</div>
+        <ul>
+          <li>The <b>self-improving loop</b> (needs a real corpus first — grows as a byproduct)</li>
+          <li><b>MCP tool</b> (add when asked; also the version-cliff surface)</li>
+          <li><b>Hosted microVM</b> (that's infra + billing + on-call = a company)</li>
+          <li><b>Rekor / Trillian attestation</b> (enterprise; local hash-chain is enough for v1)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout warn" style="margin-top:16px">🧠 <b>The bugs it caught (now fixed above):</b> ① the "0% regression" gate clause was <b>logically vacuous</b> (added rules can't un-catch). ② "add-only" makes <b>false positives grow forever</b> → needs rule GC. ③ you <b>can't measure catch-rate</b> solo (miss-rate is unlabeled) → reframed the claim. ④ syntactic checks miss semantic cheats → <b>added mutation testing</b>. ⑤ if ground truth is LLM-labeled, the judge <b>leaks into the signed verdict</b> → must be human/synthetic-anchored. ⑥ crypto proves <i>integrity, not correctness</i> — don't let it imply the verdict is right.</div>
+
+    <div class="det" style="margin-top:16px">
+      <div class="col" style="border:1px solid var(--line);border-radius:12px;padding:14px 16px">
+        <h3 style="font-size:13px;margin-bottom:6px">⚠️ Biggest risk</h3>
+        <p style="color:var(--sub);font-size:12.5px;margin:0">Scope. Built as written, you spend a month on corpus/eval/transparency-log plumbing and never ship the thing people wanted. And detection is an <b>arms race vs adaptive agents</b> — scope the claim to lazy, non-adversarial agents (today's real failure mode).</p>
+      </div>
+      <div class="col" style="border:1px solid rgba(52,211,153,.35);border-radius:12px;padding:14px 16px;background:linear-gradient(180deg,rgba(52,211,153,.06),transparent)">
+        <h3 style="font-size:13px;margin-bottom:6px">✅ Biggest upside</h3>
+        <p style="color:var(--sub);font-size:12.5px;margin:0">The moat isn't the detector — it's the <b>corpus of how agents cheat</b> + attestation as a standard. But the local-only spec forfeits it: to get the network effect the loop must become an <b>opt-in federated corpus</b> (users share caught cheats, everyone's net grows). That's the real 10x, later.</p>
+      </div>
+    </div>
+
+    <div class="callout" style="border-color:rgba(110,231,255,.4);background:rgba(110,231,255,.06);margin-top:16px">
+      🧪 <b>The 48-hour test (unchanged, and the council agreed):</b> build ONLY the deterministic detector — git-diff for deleted/weakened tests + coverage delta + <code>sys.exit</code>/skip grep + one <code>mutmut</code> pass. Run it on ~20 real agent PRs. Publish the catch count. Don't write a line of the loop or the crypto until that number proves people care.
+    </div>
+    <p style="margin-top:12px;color:var(--mut);font-size:12px">Verdict by the Judge over 5 independent council agents. Scores: Contrarian 3 · Builder 3 · Logician 5 · Researcher 8 · Expansionist 8. Not a KILL (the core is genuinely wanted and the stack is validated); not a GO (as specified it's a scope trap that won't ship solo).</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="kicker" style="margin-bottom:8px">Grounding</div>
+    <p class="src-note">
+      Stack: MCP Python SDK 1.28.1 · tree-sitter-language-pack · Docker/E2B/microsandbox · pytest+coverage.py 7.15 · Vitest 3 (v8) · uv/PyPI · stdlib sqlite3 (all verified Jul 2026).<br>
+      Self-improve + logging: Self-Harness (arXiv 2606.09498) · capped-eval w/ randomized tests (2606.07379) · verification horizon (2606.26300) · Semgrep · DeepEval · Sigma rule lifecycle · in-toto/DSSE · Sigstore cosign + Rekor v2 · Trillian Tessera · Merkle hash-chain logs.
+    </p>
+    <p style="margin-top:12px;color:var(--mut)">Finalized from 2 engineering research passes. Companion files: <b>Proof-of-Work — how we'll build it</b> and <b>Closed-Source AI SaaS ideas</b>. Next: scaffold the 48-hour deterministic cheat-detector test.</p>
+  </div>
+</footer>
+
+</body>
+</html>

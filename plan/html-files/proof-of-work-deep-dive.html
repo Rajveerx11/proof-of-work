@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proof-of-Work — How We'll Build It</title>
+<style>
+  :root{
+    --bg:#0b0e14; --bg2:#111621; --card:#151b28; --card2:#1a2233;
+    --line:#243044; --ink:#e8edf6; --sub:#9fb0c8; --mut:#6b7c96;
+    --acc:#6ee7ff; --acc2:#a78bfa; --go:#34d399; --warn:#fbbf24; --bad:#fb7185;
+    --grad:linear-gradient(135deg,#6ee7ff 0%,#a78bfa 55%,#fb7185 100%);
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#1a2338 0%,transparent 60%),var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.52;font-size:14px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  a{color:var(--acc)}
+  h1,h2,h3,h4{line-height:1.15;margin:0}
+  .mono{font-family:var(--mono)}
+  b{color:var(--ink)}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--sub);background:var(--bg2)}
+
+  header.hero{padding:54px 0 30px;border-bottom:1px solid var(--line)}
+  .hero .eyebrow{font-family:var(--mono);color:var(--acc);letter-spacing:.14em;font-size:11px;text-transform:uppercase}
+  .hero h1{font-size:clamp(26px,4.4vw,42px);font-weight:800;letter-spacing:-.02em;margin:13px 0 10px}
+  .hero h1 .g{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lede{font-size:clamp(14px,1.7vw,16px);color:var(--sub);max-width:730px}
+  .metastrip{display:flex;flex-wrap:wrap;gap:9px;margin-top:20px}
+  .metastrip .pill{background:var(--card)}
+
+  section{padding:36px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-family:var(--mono);color:var(--acc2);letter-spacing:.12em;text-transform:uppercase;font-size:11px;margin-bottom:9px}
+  h2.sec{font-size:clamp(19px,2.6vw,25px);font-weight:800;letter-spacing:-.01em;margin-bottom:8px}
+  .sublede{color:var(--sub);max-width:730px;margin-bottom:22px;font-size:13.5px}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+  /* one-liner box */
+  .oneliner{background:linear-gradient(135deg,rgba(110,231,255,.07),rgba(167,139,250,.06));border:1px solid var(--line);
+    border-left:3px solid var(--acc);border-radius:12px;padding:18px 20px;font-size:15px}
+  .oneliner .mono{color:var(--acc)}
+
+  /* reframe two-col */
+  .reframe{display:grid;grid-template-columns:1fr auto 1fr;gap:0;align-items:stretch;margin-top:6px}
+  .rf{border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .rf.no{border-color:rgba(251,113,133,.35);background:linear-gradient(180deg,rgba(251,113,133,.06),transparent)}
+  .rf.yes{border-color:rgba(52,211,153,.4);background:linear-gradient(180deg,rgba(52,211,153,.08),transparent)}
+  .rf h4{font-size:13px;margin-bottom:8px}
+  .rf p{margin:0;color:var(--sub);font-size:13px}
+  .rfarrow{display:flex;align-items:center;padding:0 16px;font-size:24px;color:var(--acc2)}
+
+  /* trust ladder */
+  .ladder{display:flex;flex-direction:column;gap:8px}
+  .rung{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:11px;padding:12px 15px;background:var(--card)}
+  .rung .lv{font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:7px;white-space:nowrap;font-weight:700}
+  .lv-strong{background:rgba(52,211,153,.16);color:#7ff0c4}
+  .lv-mid{background:rgba(251,191,36,.16);color:#ffd77a}
+  .lv-weak{background:rgba(251,113,133,.16);color:#ffa7b4}
+  .rung .rt{flex:1}
+  .rung .rt b{font-size:13.5px}
+  .rung .rt span{display:block;color:var(--sub);font-size:12.5px;margin-top:2px}
+
+  /* architecture layers */
+  .arch{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .layer{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--card)}
+  .layer .lh{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .layer .lh .ico{font-size:16px}
+  .layer .lh b{font-size:13.5px}
+  .layer .lh .free{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(52,211,153,.16);color:#7ff0c4}
+  .layer .lh .paid{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(167,139,250,.16);color:#c9b8ff}
+  .layer p{margin:0;color:var(--sub);font-size:12.5px}
+
+  /* flow */
+  .flow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .node{background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:12px;font-family:var(--mono);white-space:nowrap;text-align:center}
+  .node.agent{border-color:rgba(167,139,250,.5);color:#c9b8ff}
+  .node.prod{border-color:rgba(110,231,255,.5);color:#a9ecff;font-weight:700}
+  .node.out{border-color:rgba(52,211,153,.5);color:#8ff0cb}
+  .node.bad{border-color:rgba(251,113,133,.5);color:#ffa7b4}
+  .arr{color:var(--mut);font-size:15px}
+
+  /* checklist of tamper checks */
+  .checks{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+  .chk{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:var(--bg2)}
+  .chk .cx{color:var(--go);font-family:var(--mono);font-size:13px;flex:0 0 auto;margin-top:1px}
+  .chk .ct b{font-size:12.5px}
+  .chk .ct code{font-family:var(--mono);font-size:11px;color:var(--acc);background:rgba(110,231,255,.08);padding:1px 5px;border-radius:5px}
+  .chk .ct span{display:block;color:var(--sub);font-size:12px;margin-top:2px}
+
+  /* interface tabs-ish */
+  .iface{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+  pre{margin:0;background:#0a0d13;border:1px solid var(--line);border-radius:10px;padding:13px 15px;overflow-x:auto}
+  code.blk{font-family:var(--mono);font-size:12px;color:#cfe6ff;line-height:1.65;white-space:pre}
+  .iface h5{font-family:var(--mono);font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin:0 0 7px}
+  .cm{color:var(--mut)} .kw{color:#c9b8ff} .st{color:#8ff0cb} .fn{color:#a9ecff}
+
+  /* open core split */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .split .col{border-radius:12px;padding:16px 18px;border:1px solid var(--line)}
+  .split .free{background:linear-gradient(180deg,rgba(52,211,153,.08),transparent);border-color:rgba(52,211,153,.35)}
+  .split .paid{background:linear-gradient(180deg,rgba(167,139,250,.08),transparent);border-color:rgba(167,139,250,.35)}
+  .split h3{font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .split ul{margin:0;padding-left:17px;color:var(--sub);font-size:13px;line-height:1.7}
+  .split ul b{color:var(--ink)}
+
+  /* roadmap */
+  .road{display:flex;flex-direction:column;gap:10px}
+  .phase{display:flex;gap:14px;border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--card)}
+  .phase .when{font-family:var(--mono);font-size:11px;color:var(--acc2);text-transform:uppercase;letter-spacing:.05em;flex:0 0 92px;padding-top:2px}
+  .phase .pc b{font-size:13.5px}
+  .phase .pc p{margin:4px 0 0;color:var(--sub);font-size:12.5px}
+  .phase.hot{border-color:rgba(251,191,36,.45);background:linear-gradient(135deg,rgba(251,191,36,.08),transparent)}
+
+  /* risk table */
+  table.risk{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+  table.risk th,table.risk td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  table.risk th{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);font-weight:600}
+  table.risk td.r{color:#ffb2ba;font-weight:600;white-space:nowrap}
+  table.risk td.f{color:var(--sub)}
+  table.risk td.f b{color:#7ff0c4}
+
+  .callout{background:var(--bg2);border:1px dashed var(--line);border-radius:10px;padding:13px 16px;color:var(--sub);font-size:13px;margin-top:14px}
+  .callout.go{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.06)}
+
+  footer{padding:30px 0 60px;color:var(--mut);font-size:12px}
+
+  @media(max-width:820px){
+    .grid2,.grid3,.reframe,.checks,.iface,.split{grid-template-columns:1fr}
+    .rfarrow{transform:rotate(90deg);padding:8px 0;justify-content:center}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Open-source build plan · deep dive</div>
+    <h1><span class="g">Proof-of-Work</span><br>how we'll actually build it</h1>
+    <p class="lede">The catch-the-cheating gate for AI-written code. This file explains, in plain terms, exactly how it works — what runs, in what order, why it's trustworthy, and how we ship it step by step.</p>
+    <div class="metastrip">
+      <span class="pill">Open-core</span>
+      <span class="pill">Ships as: CLI + git hook + GitHub Action + MCP</span>
+      <span class="pill">Edge: facts, not opinions</span>
+      <span class="pill">Window: move fast</span>
+    </div>
+  </div>
+</header>
+
+<!-- WHAT IT IS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">The one-liner</div>
+    <h2 class="sec">What we're building</h2>
+    <div class="oneliner">
+      A tool that runs the moment an AI agent says <b>"done."</b> It re-checks the work against <b>facts</b> — did the tests really pass, were any tests deleted or faked, does the change actually match the task — and returns a plain <span class="mono">pass / fail + reasons</span>. Every run is signed and logged, so you can prove the code was checked.
+    </div>
+    <p class="sublede" style="margin-top:18px">The roast told us to change one thing, and it changes everything about how we build it:</p>
+    <div class="reframe">
+      <div class="rf no">
+        <h4>❌ What we're NOT building</h4>
+        <p>An <b>AI that grades another AI</b>, which the suspect agent politely calls on itself. That's the weak, easy-to-copy part — and the big labs give it away free.</p>
+      </div>
+      <div class="rfarrow">➜</div>
+      <div class="rf yes">
+        <h4>✅ What we ARE building</h4>
+        <p>A <b>cheat-catcher built on hard facts</b>, run as a <b>gate you control</b> (a git hook / CI step), that the agent can't skip. Plus a signed record of every check.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CORE PRINCIPLE: TRUST LADDER -->
+<section>
+  <div class="wrap">
+    <div class="kicker">The core idea</div>
+    <h2 class="sec">Lean on facts first, opinions last</h2>
+    <p class="sublede">The whole design follows one rule: trust the checks that have a <b>right answer</b> (a test runs or it doesn't; a file changed or it didn't) far more than checks that are a matter of <b>opinion</b> (an AI reading a diff). We climb this ladder top-down and only fall back to the weak rung when we must.</p>
+    <div class="ladder">
+      <div class="rung">
+        <span class="lv lv-strong">FACT · strong</span>
+        <div class="rt"><b>Did the real tests pass?</b><span>Run the actual test suite in a clean place. Green or red — no opinion involved. This is the backbone.</span></div>
+      </div>
+      <div class="rung">
+        <span class="lv lv-strong">FACT · strong</span>
+        <div class="rt"><b>Was the test suite tampered with?</b><span>Compare against git: tests deleted, skipped, weakened, or a fake "exit success" added. Pure code inspection, no AI. <b>This is our unique edge.</b></span></div>
+      </div>
+      <div class="rung">
+        <span class="lv lv-mid">FACT · medium</span>
+        <div class="rt"><b>Did hidden tests pass?</b><span>Run extra tests the agent never saw, so it can't teach to the test. Strong signal, but needs the tests to exist (see how below).</span></div>
+      </div>
+      <div class="rung">
+        <span class="lv lv-weak">OPINION · weak, optional</span>
+        <div class="rt"><b>Does the change match the task?</b><span>An AI judge reads the diff vs the task and flags what looks missing. Useful as a hint — never the only thing that decides pass/fail.</span></div>
+      </div>
+    </div>
+    <div class="callout">💡 In one line: <b>the product's trust comes from the top two rungs.</b> The AI judge is a helpful extra, not the foundation. That's the exact inversion the roast demanded — and the reason the labs can't easily copy us.</div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Architecture</div>
+    <h2 class="sec">The five parts</h2>
+    <p class="sublede">Small pieces, each doing one job. Green = free &amp; open-source (the wedge that spreads). Purple = the paid, hosted parts (the moat).</p>
+    <div class="arch">
+      <div class="layer">
+        <div class="lh"><span class="ico">🚪</span><b>1 · The Gate</b><span class="free">FREE</span></div>
+        <p>Where it plugs in: a <b>git pre-commit hook</b>, a <b>GitHub Action</b>, or an <b>MCP tool</b>. The human wires it once, so the agent can't route around it. This alone kills the "fox guards the henhouse" problem.</p>
+      </div>
+      <div class="layer">
+        <div class="lh"><span class="ico">🧪</span><b>2 · The Test Runner</b><span class="free">FREE</span></div>
+        <p>Runs the project's tests in a <b>clean, isolated process</b> and reads the true result — not the agent's word for it. Records pass/fail, counts, and coverage.</p>
+      </div>
+      <div class="layer">
+        <div class="lh"><span class="ico">🔍</span><b>3 · The Cheat Detector</b><span class="free">FREE</span></div>
+        <p>The star. Diffs the change against git and parses the code (AST) to spot tampering — deleted tests, <span class="mono">sys.exit(0)</span>, empty asserts, new skips, mocked-away logic. <b>Zero AI, fully deterministic.</b></p>
+      </div>
+      <div class="layer">
+        <div class="lh"><span class="ico">🤖</span><b>4 · The AI Judge</b><span class="free">FREE (optional)</span></div>
+        <p>Only if turned on: an LLM compares the diff to the task and lists what may be missing. Advisory only. Bring-your-own-key so it costs us nothing.</p>
+      </div>
+      <div class="layer">
+        <div class="lh"><span class="ico">📜</span><b>5 · The Attestation Log</b><span class="paid">PAID / hosted</span></div>
+        <p>An <b>append-only, hash-chained record</b> of every check: what ran, what passed, what cheating was caught, signed and time-stamped. This is what a team/manager pays for — proof, across repos, that can't be edited after the fact.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DATA FLOW -->
+<section>
+  <div class="wrap">
+    <div class="kicker">What happens on one run</div>
+    <h2 class="sec">Step by step, when the agent says "done"</h2>
+    <div class="flow">
+      <span class="node agent">Agent finishes<br>+ triggers gate</span><span class="arr">→</span>
+      <span class="node prod">2 · run real tests</span><span class="arr">→</span>
+      <span class="node prod">3 · scan diff<br>for cheating</span><span class="arr">→</span>
+      <span class="node">4 · AI judge<br>(optional)</span><span class="arr">→</span>
+      <span class="node out">verdict:<br>pass ✓</span>
+    </div>
+    <div class="flow" style="margin-top:6px">
+      <span class="arr" style="margin-left:2px">…or</span>
+      <span class="node bad">fail ✗ — "3 tests deleted, coverage dropped 12%"</span>
+      <span class="arr">→</span>
+      <span class="node agent">agent must fix &amp; retry</span>
+      <span class="arr">→</span>
+      <span class="node out">📜 result signed &amp; logged</span>
+    </div>
+    <div class="callout">The agent <b>cannot mark itself done</b> — the gate decides, and every outcome (pass or caught-cheating) is written to the log. That log is the thing you sell upward.</div>
+  </div>
+</section>
+
+<!-- THE HARD PARTS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">The two hard parts, honestly</div>
+    <h2 class="sec">How the tricky bits actually work</h2>
+
+    <div class="grid2" style="margin-bottom:18px">
+      <div class="card">
+        <h4 style="font-size:14px;margin-bottom:8px">🔍 Cheat detection (deterministic)</h4>
+        <p style="color:var(--sub);font-size:13px;margin:0 0 12px">The roast said this is the one truly defensible piece. It's just careful code inspection — no AI, so it's fast, free, and always gives the same answer. The concrete checks:</p>
+        <div class="checks">
+          <div class="chk"><span class="cx">✓</span><div class="ct"><b>Deleted / removed tests</b><span>git shows test functions that vanished.</span></div></div>
+          <div class="chk"><span class="cx">✓</span><div class="ct"><b>Fake pass</b><span><code>sys.exit(0)</code>, <code>os._exit(0)</code>, <code>pytest.skip</code> in the run path.</span></div></div>
+          <div class="chk"><span class="cx">✓</span><div class="ct"><b>Empty / weakened asserts</b><span><code>assert True</code>, removed assertions, <code>assertTrue(1)</code>.</span></div></div>
+          <div class="chk"><span class="cx">✓</span><div class="ct"><b>New skips / xfail</b><span><code>@skip</code> or <code>@xfail</code> added to make red go green.</span></div></div>
+          <div class="chk"><span class="cx">✓</span><div class="ct"><b>Coverage drop</b><span>tests still "pass" but cover much less code.</span></div></div>
+          <div class="chk"><span class="cx">✓</span><div class="ct"><b>Mocked-away logic</b><span>the thing under test replaced by a mock that always returns OK.</span></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h4 style="font-size:14px;margin-bottom:8px">🧪 Hidden tests — the honest answer</h4>
+        <p style="color:var(--sub);font-size:13px;margin:0 0 12px">The roast's sharpest hit: "if the tests are on the agent's machine, the agent can read them." True. So we ship <b>two modes</b> and are upfront about each:</p>
+        <div class="ladder">
+          <div class="rung"><span class="lv lv-mid">LOCAL</span><div class="rt"><b>Trusted local mode (free)</b><span>Hidden tests run in a separate process the agent's session doesn't control. Stops casual cheating, not a determined attacker. Honest about that.</span></div></div>
+          <div class="rung"><span class="lv lv-strong">HOSTED</span><div class="rt"><b>Secret bank mode (paid)</b><span>The diff is sent to our runner; the hidden tests live server-side and never touch the agent's machine. This is genuinely un-cheatable — and it's the paid moat.</span></div></div>
+        </div>
+        <p style="color:var(--sub);font-size:12.5px;margin:12px 0 0">Even without hidden tests, the top two ladder rungs (real tests + tamper scan) already catch most real-world cheating. Hidden tests are the upgrade, not the base.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INTERFACE -->
+<section>
+  <div class="wrap">
+    <div class="kicker">How you actually use it</div>
+    <h2 class="sec">Four front doors, one engine</h2>
+    <p class="sublede">Same core, exposed four ways so it drops into any workflow with no friction — this is also the distribution: each front door is a place people discover it.</p>
+    <div class="iface">
+      <div>
+        <h5>As a CLI (the free hero)</h5>
+        <pre><code class="blk"><span class="cm"># run it by hand or in any script</span>
+<span class="fn">pow</span> check <span class="cm"># checks the current diff</span>
+
+<span class="st">✓ tests: 142 passed</span>
+<span class="st">✓ no tampering found</span>
+<span class="st">⚠ AI judge: endpoint has no error test</span>
+<span class="st">VERDICT: PASS (1 warning)</span></code></pre>
+      </div>
+      <div>
+        <h5>As a git pre-commit hook</h5>
+        <pre><code class="blk"><span class="cm"># .pre-commit-config.yaml</span>
+<span class="kw">- repo</span>: proof-of-work
+  <span class="kw">hooks</span>:
+    <span class="kw">- id</span>: pow-gate
+
+<span class="cm"># now every commit is checked</span>
+<span class="cm"># cheating = commit blocked</span></code></pre>
+      </div>
+      <div>
+        <h5>As a GitHub Action (CI gate)</h5>
+        <pre><code class="blk"><span class="kw">- uses</span>: proof-of-work/gate@v1
+  <span class="kw">with</span>:
+    <span class="kw">mode</span>: hosted <span class="cm"># secret tests</span>
+    <span class="kw">fail-on</span>: tamper
+
+<span class="cm"># blocks the PR if the agent cheated</span></code></pre>
+      </div>
+      <div>
+        <h5>As an MCP tool (agents call it)</h5>
+        <pre><code class="blk"><span class="fn">verify</span>(task, changeset) → {
+  <span class="kw">passed</span>: <span class="st">false</span>,
+  <span class="kw">tampered</span>: <span class="st">true</span>,
+  <span class="kw">unmet</span>: [<span class="st">"delete-user path"</span>],
+  <span class="kw">attestation</span>: <span class="st">"pow:9f2c…"</span>
+}</code></pre>
+      </div>
+    </div>
+    <div class="callout">Tech stack, kept lean: <b>Python</b> (best AST + test tooling) for the engine, its built-in <span class="mono">ast</span> module + <span class="mono">git</span> for the detector, a subprocess/container for isolation, <b>SQLite</b> for the local log, the official <b>MCP SDK</b>, and <b>bring-your-own-key</b> for the optional judge. No new heavy dependencies.</div>
+  </div>
+</section>
+
+<!-- OPEN CORE -->
+<section>
+  <div class="wrap">
+    <div class="kicker">The business shape</div>
+    <h2 class="sec">Open-core: free front door, paid engine room</h2>
+    <p class="sublede">Give away the part that spreads; charge for the part that proves. Same model LangChain used (free library, paid cloud).</p>
+    <div class="split">
+      <div class="col free">
+        <h3>🟢 Free &amp; open-source (the wedge)</h3>
+        <ul>
+          <li>The <b>cheat detector</b> + real-test runner</li>
+          <li><b>CLI</b>, <b>git hook</b>, and basic <b>GitHub Action</b></li>
+          <li>The <b>MCP tool</b>, model-agnostic</li>
+          <li>Local attestation log (this machine)</li>
+          <li>Bring-your-own-key AI judge</li>
+        </ul>
+        <p style="color:var(--sub);font-size:12px;margin:12px 0 0">→ Job: get installed everywhere, earn trust, collect stars.</p>
+      </div>
+      <div class="col paid">
+        <h3>🟣 Paid &amp; hosted (the moat)</h3>
+        <ul>
+          <li><b>Secret test bank</b> — un-cheatable hidden tests</li>
+          <li><b>Team dashboard</b> — "agents tried to cheat N× this sprint," across every repo</li>
+          <li><b>Cross-repo, tamper-proof attestation</b> log + export</li>
+          <li><b>Compliance report</b> — proof for audits/SOC2</li>
+          <li>Works across Claude, Codex, Cursor — <b>the vendor won't audit itself</b></li>
+        </ul>
+        <p style="color:var(--sub);font-size:12px;margin:12px 0 0">→ Job: the number an eng manager pays for.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section>
+  <div class="wrap">
+    <div class="kicker">How we ship it</div>
+    <h2 class="sec">Build order — smallest useful thing first</h2>
+    <div class="road">
+      <div class="phase hot">
+        <div class="when">First · 48 hrs</div>
+        <div class="pc"><b>Prove the catch (do this before anything else)</b><p>Build ONLY the deterministic cheat detector as a script. Run it on ~20 real agent-made PRs (yours + public). Measure how many cheats it catches. Post the number on r/ClaudeAI / HN. This tells you the whole idea is real — for two days of work.</p></div>
+      </div>
+      <div class="phase">
+        <div class="when">Week 1</div>
+        <div class="pc"><b>Free hero</b><p>Wrap the detector + real-test runner into a clean CLI and a pre-commit hook. Zero AI. One-command install.</p></div>
+      </div>
+      <div class="phase">
+        <div class="when">Week 2</div>
+        <div class="pc"><b>Go deep on cheat detection</b><p>Add the harder checks (weakened asserts, mocked-away logic, coverage drop). Depth here = the moat nobody else has.</p></div>
+      </div>
+      <div class="phase">
+        <div class="when">Week 3</div>
+        <div class="pc"><b>Launch + distribute</b><p>Open-source repo, MCP tool, GitHub Action. List on mcp.so, Glama, Smithery, PulseMCP, awesome-mcp-servers. Show HN + Reddit post with the catch-rate proof.</p></div>
+      </div>
+      <div class="phase">
+        <div class="when">Week 4</div>
+        <div class="pc"><b>Attestation log</b><p>Sign &amp; hash-chain every run locally. This is the seed of the paid product.</p></div>
+      </div>
+      <div class="phase">
+        <div class="when">Month 2</div>
+        <div class="pc"><b>Turn on money</b><p>Hosted secret-test bank + team dashboard + compliance export. Sell to the eng manager, not the IC.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RISKS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Straight talk</div>
+    <h2 class="sec">The risks — and how this design answers each</h2>
+    <table class="risk">
+      <thead><tr><th>The risk (from the roast)</th><th>How the build answers it</th></tr></thead>
+      <tbody>
+        <tr><td class="r">Fox guards the henhouse — the agent chooses whether to call it</td><td class="f">The gate is wired by the <b>human</b> as a hook/CI step. The agent can't opt out or reinterpret the result.</td></tr>
+        <tr><td class="r">"Hidden tests" aren't hidden on the agent's machine</td><td class="f">Two honest modes: local (stops casual cheating) and <b>hosted secret bank</b> (truly un-cheatable, and it's the paid tier).</td></tr>
+        <tr><td class="r">The labs bundle self-verification for free</td><td class="f">We don't sell generic self-verify. We own <b>deterministic cheat detection + a cross-vendor audit trail</b> — the part a lab won't build against its own agent.</td></tr>
+        <tr><td class="r">AI-judging-a-diff is flaky and you can't trust it</td><td class="f">Correct — so it's <b>optional and advisory only</b>, never the thing that decides pass/fail. The verdict rests on facts.</td></tr>
+        <tr><td class="r">Agent has no wallet; the IC won't pay</td><td class="f">Free for the IC forever. The paid product is a <b>manager's compliance dashboard</b> — a different, paying buyer.</td></tr>
+        <tr><td class="r">The idea is in the air; someone else ships first</td><td class="f">That's the real risk. Answer = the 48-hour test this week, then a fast public launch. <b>Speed is the strategy.</b></td></tr>
+      </tbody>
+    </table>
+    <div class="callout go">✅ <b>Bottom line:</b> the reshaped design turns every roast objection into a design decision. Build the free deterministic cheat-catcher first, prove the catch-rate in 48 hours, launch fast, then add the paid audit trail. That's the plan.</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Proof-of-Work · open-source build plan · deep dive. Grounded in the earlier 5-agent research, the /roast council verdict (RESHAPE), and a GitHub scan showing the cheat-detection axis is shipped by zero tools today. Next step: the 48-hour catch-rate test.</p>
+  </div>
+</footer>
+
+</body>
+</html>
