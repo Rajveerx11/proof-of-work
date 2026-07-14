@@ -2,8 +2,6 @@
 Engine is patched — real git repos / test runs are out of scope for a unit test."""
 import json
 
-import pytest
-
 from proofofwork import engine
 from proofofwork.interfaces import cli
 from proofofwork.types import Finding, Severity, Verdict

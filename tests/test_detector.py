@@ -141,8 +141,10 @@ def test_mock_of_untouched_module_is_quiet():
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 def test_collect_diff_roundtrip(tmp_path):
     root = str(tmp_path)
-    run = lambda *a: subprocess.run(["git", *a], cwd=root, check=True,
-                                    capture_output=True, text=True)
+
+    def run(*a):
+        return subprocess.run(["git", *a], cwd=root, check=True,
+                              capture_output=True, text=True)
     run("init", "-q")
     run("config", "user.email", "t@t.t")
     run("config", "user.name", "t")

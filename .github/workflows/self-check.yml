@@ -1,0 +1,24 @@
+name: Self-check (dogfood)
+
+# Proof-of-Work gates its OWN pull requests — the product proving itself in CI.
+# If a change to this repo tried to delete a test, fake a pass, or drop coverage,
+# this job blocks it exactly the way it would for any consumer.
+on:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need the base commit in history to diff against it
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      # dev extra installs pytest so the gate can actually RE-RUN our suite,
+      # not just scan the diff.
+      - name: Install proof-of-work from source
+        run: uv pip install --system -e ".[dev]"
+      - name: Gate this PR's diff against its base
+        run: proof-of-work check --base "${{ github.event.pull_request.base.sha }}"
