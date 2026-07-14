@@ -1,0 +1,24 @@
+name: "Proof-of-Work"
+description: "Re-check an AI agent's work against facts: real tests, diff tampering, coverage."
+inputs:
+  mutation:
+    description: "Also run mutation testing (slower)."
+    required: false
+    default: "false"
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install proof-of-work
+      shell: bash
+      run: pip install proof-of-work
+    - name: Run gate
+      shell: bash
+      run: |
+        base="${{ github.base_ref }}"
+        if [ -n "$base" ]; then ref="origin/$base"; else ref="HEAD~1"; fi
+        flags=""
+        if [ "${{ inputs.mutation }}" = "true" ]; then flags="--mutation"; fi
+        proof-of-work check --base "$ref" $flags

@@ -1,0 +1,28 @@
+[project]
+name = "proof-of-work"
+version = "0.1.0"
+description = "Catch AI coding agents cheating on their work — verdict on facts, not opinions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "cryptography>=42",
+  "tree-sitter-language-pack>=0.2",  # JS/TS parsing; Python uses stdlib ast
+]
+
+[project.optional-dependencies]
+judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-key
+dev = ["pytest>=8"]
+
+[project.scripts]
+proof-of-work = "proofofwork.interfaces.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["proofofwork"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
