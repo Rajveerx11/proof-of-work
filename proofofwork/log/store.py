@@ -41,20 +41,56 @@ def _key_path(db_path: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(db_path)), "log.key")
 
 
-def _load_or_create_key(db_path: str) -> Ed25519PrivateKey:
-    path = _key_path(db_path)
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return Ed25519PrivateKey.from_private_bytes(f.read())
-    key = Ed25519PrivateKey.generate()
-    raw = key.private_bytes_raw()
-    # atomic-ish write; 0600 best effort (no-op semantics on Windows)
-    with open(path, "wb") as f:
-        f.write(raw)
+def _pub_path(db_path: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "log.pub")
+
+
+def _publish_pub(pub_path: str, key: Ed25519PrivateKey) -> None:
+    if os.path.exists(pub_path):
+        return
+    tmp = f"{pub_path}.{os.getpid()}.tmp"
+    with open(tmp, "wb") as f:
+        f.write(key.public_key().public_bytes_raw())
     try:
-        os.chmod(path, 0o600)
+        os.replace(tmp, pub_path)  # atomic publish; content is identical for all writers
     except OSError:
-        pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _load_or_create_key(db_path: str) -> Ed25519PrivateKey:
+    """Return the signing key, creating it race-safely on first use.
+
+    Concurrent first-run writers each generate a candidate, write it to a private
+    temp file, then hard-link it into place. os.link fails if the target exists, so
+    exactly one winner's key lands on disk; everyone then re-reads that file, so all
+    writers sign with the SAME key (no forked chain). Also publishes log.pub so the
+    verification path never has to touch the private key.
+    """
+    path = _key_path(db_path)
+    if not os.path.exists(path):
+        candidate = Ed25519PrivateKey.generate()
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(candidate.private_bytes_raw())
+        try:
+            os.link(tmp, path)  # atomic; loser gets FileExistsError and reads the winner's key
+        except FileExistsError:
+            pass
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    with open(path, "rb") as f:
+        key = Ed25519PrivateKey.from_private_bytes(f.read())
+    _publish_pub(_pub_path(db_path), key)
     return key
 
 
@@ -89,11 +125,13 @@ def record(envelope: dict, db_path: str) -> str:
 
 
 def verify_chain(db_path: str) -> bool:
-    key_path = _key_path(db_path)
-    if not os.path.exists(key_path):
+    # Verification uses ONLY the public key — running verify-log never grants signing
+    # authority. Fail closed if the published public key is missing.
+    pub_path = _pub_path(db_path)
+    if not os.path.exists(pub_path):
         return False
-    with open(key_path, "rb") as f:
-        pub: Ed25519PublicKey = Ed25519PrivateKey.from_private_bytes(f.read()).public_key()
+    with open(pub_path, "rb") as f:
+        pub = Ed25519PublicKey.from_public_bytes(f.read())
 
     conn = _connect(db_path)
     try:

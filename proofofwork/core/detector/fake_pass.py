@@ -7,7 +7,8 @@ from ...types import Diff, Finding, Severity
 
 # sys.exit(0) / sys.exit() / os._exit( / pytest.exit(  — sys.exit(1) is a real failure, ignore it
 _PY_EXIT = re.compile(r"\b(?:sys\.exit\(\s*(?:0\s*)?\)|os\._exit\(|pytest\.exit\()")
-_JS_EXIT = re.compile(r"\bprocess\.exit\(")
+# only bare process.exit() / process.exit(0) — process.exit(1) is a real failure signal
+_JS_EXIT = re.compile(r"\bprocess\.exit\(\s*(?:0\s*)?\)")
 _PRAGMA = "# pragma: no cover"
 
 

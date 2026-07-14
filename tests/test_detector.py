@@ -71,10 +71,14 @@ def test_sys_exit_blocks_only_bare_or_zero():
     assert ("fake-pass:sys-exit", Severity.BLOCK) not in _rules(fake_pass.check(legit, "."))
 
 
-def test_process_exit_blocks_js():
-    d = Diff(files=[_f(path="a.test.js", is_test=True, language="js",
-                       added=["  process.exit(0);"])])
-    assert ("fake-pass:process-exit", Severity.BLOCK) in _rules(fake_pass.check(d, "."))
+def test_process_exit_blocks_only_bare_or_zero():
+    good = Diff(files=[_f(path="a.test.js", is_test=True, language="js",
+                          added=["  process.exit(0);"])])
+    assert ("fake-pass:process-exit", Severity.BLOCK) in _rules(fake_pass.check(good, "."))
+    # process.exit(1) is a real failure signal, not a cheat
+    legit = Diff(files=[_f(path="a.test.js", is_test=True, language="js",
+                           added=["  process.exit(1);"])])
+    assert ("fake-pass:process-exit", Severity.BLOCK) not in _rules(fake_pass.check(legit, "."))
 
 
 def test_coverage_disabled_warns():

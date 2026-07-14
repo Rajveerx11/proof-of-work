@@ -43,8 +43,9 @@ def _run_python(sandbox: Sandbox, root: str) -> TestResult | None:
         return None  # no recognizable python test tooling
 
     if _has_module(sandbox, root, "coverage"):
-        cov_file = tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, dir=root)
+        # system temp, not `root`: `coverage json -o` takes an absolute path, so the
+        # file never appears as an untracked entry inside the repo under test.
+        cov_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         cov_file.close()
         try:
             run = sandbox.run(

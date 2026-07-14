@@ -6,9 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
-  "cryptography>=42",
-  "tree-sitter-language-pack>=0.2",  # JS/TS parsing; Python uses stdlib ast
+  "cryptography>=42",  # Ed25519 signing of the tamper-evident log head
 ]
+# ponytail: no tree-sitter dep — every detector check is regex/stdlib-ast based. Add a
+# grammar dep only when a check actually needs a parse tree (deeper JS/TS semantics, v2).
 
 [project.optional-dependencies]
 judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-key
