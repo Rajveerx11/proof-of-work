@@ -50,7 +50,7 @@ jobs:
           path: dist/
       # On brand: a tamper-evidence tool signs its own release artifacts.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
       - name: Publish to PyPI
