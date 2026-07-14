@@ -1,17 +1,31 @@
 name: Release
 
-# Tag a version (e.g. `git tag v0.1.0 && git push --tags`) to build, attest,
-# publish to PyPI, and cut a GitHub Release.
+# Tag a version (e.g. `git tag v0.1.0 && git push --tags`) to test, build,
+# attest, publish to PyPI, and cut a GitHub Release.
 on:
   push:
     tags: ["v*"]
 
 jobs:
-  build:
+  # Never publish a tag whose tests don't pass — the gate before the gate.
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --extra dev
+      - run: uv run pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"   # pin for reproducible builds
       - name: Build sdist + wheel
         run: uv build
       - uses: actions/upload-artifact@v4
@@ -49,7 +63,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Create GitHub Release
-        run: gh release create "${{ github.ref_name }}" --generate-notes
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # Attach the exact wheel + sdist so the release page is downloadable and
+      # matches the PyPI artifacts (and their attestations).
+      - name: Create GitHub Release with artifacts
+        run: gh release create "${{ github.ref_name }}" --generate-notes dist/*
         env:
           GH_TOKEN: ${{ github.token }}
