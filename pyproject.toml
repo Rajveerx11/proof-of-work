@@ -4,7 +4,16 @@ version = "0.1.0"
 description = "Catch AI coding agents cheating on their work — verdict on facts, not opinions."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["ai-agents", "testing", "ci", "code-review", "cheat-detection", "attestation"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
   "cryptography>=42",  # Ed25519 signing of the tamper-evident log head
 ]
