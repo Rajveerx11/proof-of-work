@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # keep the Actions in these workflows current (security patches, new majors)
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+  # keep Python deps (cryptography, etc.) current
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps

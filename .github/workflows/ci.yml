@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# a newer push to the same ref cancels the in-flight run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test · py${{ matrix.python }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # cross-OS is load-bearing here: os.link, subprocess, and console
+        # encoding all differ across platforms and have bitten us already.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv + Python ${{ matrix.python }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install (with dev extra)
+        run: uv sync --extra dev
+      - name: Run tests
+        run: uv run pytest -q
+      # Future (v2): add a Node matrix here once the JS/TS runner path is exercised
+      # end-to-end (vitest/jest), and a mutmut smoke pass on a fixture repo.
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Ruff
+        run: uvx ruff check .

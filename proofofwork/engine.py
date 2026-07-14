@@ -16,12 +16,14 @@ DEFAULT_DB = ".proofofwork/log.db"
 def _changeset_sha(diff) -> str:
     h = hashlib.sha256()
     for f in diff.files:
-        h.update(f.status.encode()); h.update(b"\0")
-        h.update(f.path.encode()); h.update(b"\0")
+        h.update(f.status.encode())
+        h.update(b"\0")
+        h.update(f.path.encode())
+        h.update(b"\0")
         for line in f.added:
-            h.update(b"+"); h.update(line.encode("utf-8", "replace")); h.update(b"\n")
+            h.update(b"+" + line.encode("utf-8", "replace") + b"\n")
         for line in f.removed:
-            h.update(b"-"); h.update(line.encode("utf-8", "replace")); h.update(b"\n")
+            h.update(b"-" + line.encode("utf-8", "replace") + b"\n")
     return h.hexdigest()
 
 
