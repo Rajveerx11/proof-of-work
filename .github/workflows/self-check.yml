@@ -17,8 +17,9 @@ jobs:
         with:
           python-version: "3.12"
       # dev extra installs pytest so the gate can actually RE-RUN our suite,
-      # not just scan the diff.
-      - name: Install proof-of-work from source
-        run: uv pip install --system -e ".[dev]"
+      # not just scan the diff. (uv sync, not --system: the runner's system
+      # Python is PEP-668 externally-managed.)
+      - name: Install (with dev extra)
+        run: uv sync --extra dev
       - name: Gate this PR's diff against its base
-        run: proof-of-work check --base "${{ github.event.pull_request.base.sha }}"
+        run: uv run proof-of-work check --base "${{ github.event.pull_request.base.sha }}"
