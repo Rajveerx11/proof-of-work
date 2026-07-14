@@ -57,6 +57,10 @@ def test_added_skip_warns():
     js = Diff(files=[_f(path="a.spec.ts", is_test=True, language="ts",
                         added=["it.only('one', () => {})"])])
     assert ("added-skip", Severity.WARN) in _rules(tests_integrity.check(js, "."))
+    # a non-framework .skip() call (e.g. a cursor/query) is not a test skip
+    quiet = Diff(files=[_f(path="a.spec.ts", is_test=True, language="ts",
+                           added=["  const rows = db.skip(5).take(10)"])])
+    assert ("added-skip", Severity.WARN) not in _rules(tests_integrity.check(quiet, "."))
 
 
 # --- fake_pass ---
@@ -86,6 +90,9 @@ def test_coverage_disabled_warns():
     assert ("fake-pass:coverage-disabled", Severity.WARN) in _rules(fake_pass.check(d, "."))
     spree = Diff(files=[_f(path="app.py", added=["x  # pragma: no cover"] * 3)])
     assert ("fake-pass:coverage-disabled", Severity.WARN) in _rules(fake_pass.check(spree, "."))
+    # a variable that merely contains "no_cov" is not a coverage kill
+    quiet = Diff(files=[_f(path="app.py", added=["retries_no_cov = 3"])])
+    assert ("fake-pass:coverage-disabled", Severity.WARN) not in _rules(fake_pass.check(quiet, "."))
 
 
 # --- asserts ---

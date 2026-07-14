@@ -19,7 +19,7 @@ def check(diff: Diff, root: str) -> list[Finding]:
         for ln in f.added:
             if _PRAGMA in ln:
                 pragma_hits += 1
-            if "--no-cov" in ln or "no_cov" in ln:
+            if "--no-cov" in ln:  # the pytest-cov disable flag; bare "no_cov" is too broad
                 out.append(Finding("fake-pass:coverage-disabled", Severity.WARN,
                                    "coverage appears to be disabled", file=f.path,
                                    evidence=ln.strip()))

@@ -8,9 +8,12 @@ from ...types import Diff, Finding, Severity
 _PY_TEST_FN = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
 _JS_TEST_FN = re.compile(r"""^\s*(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)""")
 
+# framework skip/focus markers only — bare ".skip(" / "xfail" match unrelated code
+# (db.skip(5), a var named xfail) and cause false positives.
 _SKIP_PATTERNS = (
-    "@pytest.mark.skip", "@unittest.skip", "pytest.skip(", "xfail",
-    ".skip(", "it.only(", "describe.only(",
+    "@pytest.mark.skip", "@unittest.skip", "pytest.skip(", "@pytest.mark.xfail",
+    "it.skip(", "describe.skip(", "test.skip(", "context.skip(",
+    "it.only(", "describe.only(",
 )
 
 

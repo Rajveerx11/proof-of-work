@@ -125,6 +125,9 @@ def record(envelope: dict, db_path: str) -> str:
 
 
 def verify_chain(db_path: str) -> bool:
+    # A missing log can't be "intact" — a wiped db must not read as verified.
+    if not os.path.exists(db_path):
+        return False
     # Verification uses ONLY the public key — running verify-log never grants signing
     # authority. Fail closed if the published public key is missing.
     pub_path = _pub_path(db_path)
