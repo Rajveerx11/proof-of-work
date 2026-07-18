@@ -48,6 +48,15 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             findings.append(Finding(rule=f"check-error:{getattr(check_fn, '__name__', '?')}",
                                     severity=Severity.INFO, message=str(e)))
 
+    # Learned rules (grown by the self-improving loop) run alongside the built-ins but stay
+    # out of ALL_CHECKS so that set remains the fixed, human-authored core.
+    try:
+        from .core.detector import learned
+        findings.extend(learned.check(diff, root))
+    except Exception as e:
+        findings.append(Finding(rule="check-error:learned", severity=Severity.INFO,
+                                message=str(e)))
+
     tests = TestResult()
     coverage_baseline: float | None = None
     if run_tests:

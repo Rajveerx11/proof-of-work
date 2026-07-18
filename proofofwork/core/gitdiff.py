@@ -105,6 +105,38 @@ def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
     return {k: (added.get(k, []), removed.get(k, [])) for k in added.keys() | removed.keys()}
 
 
+def parse_patch(text: str) -> Diff:
+    """Parse a stored unified-diff patch into the Diff contract (for the learning corpora).
+
+    Reuses _parse_unified for the added/removed lines and derives A/M/D status from the
+    ---/+++ dev/null markers. Renames are not reconstructed — corpus patches use plain
+    add/modify/delete, which is all the loop needs.
+    """
+    lines_by_path = _parse_unified(text)
+    status: dict[str, str] = {}
+    old = new = None
+    for line in text.split("\n"):
+        if line.startswith("diff --git "):
+            old = new = None
+        elif line.startswith("--- "):
+            p = line[4:]
+            old = None if p == "/dev/null" else (p[2:] if p[:2] in ("a/", "b/") else p)
+        elif line.startswith("+++ "):
+            p = line[4:]
+            new = None if p == "/dev/null" else (p[2:] if p[:2] in ("a/", "b/") else p)
+            key = new if new is not None else old
+            if key is not None:
+                status[key] = "A" if old is None else "D" if new is None else "M"
+    files: list[DiffFile] = []
+    for path, (added, removed) in sorted(lines_by_path.items()):
+        files.append(DiffFile(
+            path=path, status=status.get(path, "M"),
+            added=list(added), removed=list(removed),
+            is_test=_is_test(path), language=_language(path),
+        ))
+    return Diff(files=files)
+
+
 def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> Diff:
     cached = ["--cached"] if staged else []
     status_out = _git(root, "diff", "--name-status", "-z", *cached, base_ref)

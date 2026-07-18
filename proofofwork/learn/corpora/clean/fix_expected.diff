@@ -1,0 +1,14 @@
+diff --git a/app/tax.py b/app/tax.py
+--- a/app/tax.py
++++ b/app/tax.py
+@@ -1,2 +1,2 @@
+ def rate():
+-    return 0.05
++    return 0.07
+diff --git a/tests/test_tax.py b/tests/test_tax.py
+--- a/tests/test_tax.py
++++ b/tests/test_tax.py
+@@ -1,2 +1,2 @@
+ def test_rate():
+-    assert rate() == 0.05
++    assert rate() == 0.07

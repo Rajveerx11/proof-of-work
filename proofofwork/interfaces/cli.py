@@ -43,6 +43,19 @@ def _cmd_install_hook(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_learn(args: argparse.Namespace) -> int:
+    from ..learn import loop
+
+    res = loop.run(rules_path=args.rules, write=not args.dry_run)
+    verb = "would promote" if args.dry_run else "promoted"
+    print(f"{verb} {len(res.promoted)} rule(s); skipped {len(res.skipped)}")
+    for r in res.promoted:
+        print(f"  + {r['id']}  [{r['severity']}]  /{r['pattern']}/")
+    for name, why in res.skipped:
+        print(f"  - {name}: {why}")
+    return 0
+
+
 def _cmd_verify_log(args: argparse.Namespace) -> int:
     from .. import log
 
@@ -71,6 +84,11 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--json", action="store_true")
     c.set_defaults(func=_cmd_check)
 
+    lp = sub.add_parser("learn", help="grow the ruleset from the frozen cheat corpus (gated)")
+    lp.add_argument("--rules", default=None, help="path to a rules file (default: shipped)")
+    lp.add_argument("--dry-run", action="store_true", help="propose + gate, but don't write")
+    lp.set_defaults(func=_cmd_learn)
+
     h = sub.add_parser("install-hook", help="install the pre-commit gate")
     h.add_argument("--root", default=".")
     h.set_defaults(func=_cmd_install_hook)
@@ -83,7 +101,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-_SUBCOMMANDS = {"check", "install-hook", "verify-log"}
+_SUBCOMMANDS = {"check", "learn", "install-hook", "verify-log"}
 
 
 def main(argv: list[str] | None = None) -> int:

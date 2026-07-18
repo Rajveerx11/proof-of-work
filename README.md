@@ -169,8 +169,13 @@ This tool is a strong filter, not an oracle. Specifically:
 **✅ v1 (shipped):** deterministic detector · CLI + git hook + GitHub Action · local signed
 log · advisory judge · Python + JS/TS.
 
-**🕓 v2+ (deferred):** self-improving rule loop · MCP tool · hosted microVM sandbox ·
-keyless signing → Rekor transparency log · opt-in federated cheat corpus.
+**🧪 v2 (in progress):** self-improving rule loop — `proof-of-work learn` mines a frozen,
+human-labeled cheat corpus, auto-drafts a rule for anything the built-ins miss, and promotes
+it only if it catches the cheat with **zero** false positives on the clean corpus (add-only;
+rollback is `git revert`).
+
+**🕓 v2+ (deferred):** MCP tool · hosted microVM sandbox · keyless signing → Rekor
+transparency log · opt-in federated cheat corpus · LLM rule-drafting · rule GC.
 
 The immediate next step is the **48-hour test**: run the detector on ~20 real agent PRs and
 publish the catch count. See [`plan/`](plan/) for the full spec and the design history.
