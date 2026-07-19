@@ -20,7 +20,7 @@ exactly what we want.
 - **Kill false positives** — a check that fires on honest code erodes trust and gets the
   whole tool disabled. Fixing that is as valuable as a new check.
 - **The cheat corpus** — sanitized, real examples of agents gaming tests make every
-  check sharper. (This corpus is the project's long-term moat.)
+  check sharper.
 - **Language support** — today Python + JS/TS; add rules for more.
 - **Docs, bug reports, adoption glue** — hooks, CI recipes, clearer errors.
 
