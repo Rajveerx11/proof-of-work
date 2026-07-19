@@ -68,11 +68,11 @@ reproducible and trustworthy.
 
 ```bash
 # run once, no install (requires uv)
-uvx proof-of-work check --base origin/main
+uvx --from proof-of-work-agent proof-of-work check --base origin/main
 
 # or install it
-pip install proof-of-work          # once published to PyPI
-proof-of-work check --staged       # gate what you're about to commit
+pip install proof-of-work-agent    # PyPI package name
+proof-of-work check --staged       # gate what you're about to commit (CLI name unchanged)
 ```
 
 Wire it as a gate the agent can't skip:
@@ -135,7 +135,7 @@ Three surfaces, one engine — the **exit code is the contract** (`0` pass, `1` 
 
 **The judge** (`--judge`) is **advisory only** — its output is logged as metadata and never
 changes the verdict. Bring your own key: set `ANTHROPIC_API_KEY` and install the extra
-(`pip install "proof-of-work[judge]"`); without either, it's silently skipped.
+(`pip install "proof-of-work-agent[judge]"`); without either, it's silently skipped.
 
 ## The tamper-evident log
 

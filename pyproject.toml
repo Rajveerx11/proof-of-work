@@ -1,5 +1,5 @@
 [project]
-name = "proof-of-work"
+name = "proof-of-work-agent"
 version = "0.1.0"
 description = "Catch AI coding agents cheating on their work — verdict on facts, not opinions."
 readme = "README.md"
