@@ -19,9 +19,37 @@ from .gate import evaluate
 
 
 @dataclass
+class LoopEvent:
+    cheat: str
+    status: str
+    reason: str
+    rule: dict | None = None
+    caught: int | None = None
+    false_positives: int | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "cheat": self.cheat,
+            "status": self.status,
+            "reason": self.reason,
+            "rule": self.rule,
+            "caught": self.caught,
+            "false_positives": self.false_positives,
+        }
+
+
+@dataclass
 class LoopResult:
     promoted: list[dict] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (cheat name, why)
+    events: list[LoopEvent] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        return {
+            "promoted": self.promoted,
+            "skipped": [{"cheat": name, "reason": why} for name, why in self.skipped],
+            "events": [event.as_dict() for event in self.events],
+        }
 
 
 def _current_findings(diff: Diff, rules_path: str):
@@ -49,20 +77,29 @@ def run(rules_path: str | None = None, *, write: bool = True) -> LoopResult:
     for name, cheat in corpus.cheats():
         if _already_caught(cheat, path):
             res.skipped.append((name, "already caught"))
+            res.events.append(LoopEvent(name, "skipped", "already caught"))
             continue
         rule = _propose.propose(name, cheat, clean)
         if rule is None:
             res.skipped.append((name, "no candidate pattern"))
+            res.events.append(LoopEvent(name, "skipped", "no candidate pattern"))
             continue
         if rule["id"] in known_ids or rule["id"] in {r["id"] for r in res.promoted}:
             res.skipped.append((name, "duplicate rule id"))
+            res.events.append(LoopEvent(name, "skipped", "duplicate rule id", rule=rule))
             continue
         verdict = evaluate(rule, cheat, clean)
         if not verdict.promote:
             res.skipped.append((name, verdict.reason))
+            res.events.append(LoopEvent(
+                name, "rejected", verdict.reason, rule=rule,
+                caught=verdict.caught, false_positives=verdict.false_positives))
             continue
         rule["provenance"] = verdict.reason
         res.promoted.append(rule)
+        res.events.append(LoopEvent(
+            name, "promoted", verdict.reason, rule=rule,
+            caught=verdict.caught, false_positives=verdict.false_positives))
 
     if write and res.promoted:
         _write(path, res.promoted)

@@ -47,12 +47,22 @@ def _cmd_learn(args: argparse.Namespace) -> int:
     from ..learn import loop
 
     res = loop.run(rules_path=args.rules, write=not args.dry_run)
+    if args.json:
+        print(json.dumps(res.as_dict(), indent=2))
+        return 0
+
     verb = "would promote" if args.dry_run else "promoted"
     print(f"{verb} {len(res.promoted)} rule(s); skipped {len(res.skipped)}")
-    for r in res.promoted:
-        print(f"  + {r['id']}  [{r['severity']}]  /{r['pattern']}/")
-    for name, why in res.skipped:
-        print(f"  - {name}: {why}")
+    for event in res.events:
+        if event.status == "promoted":
+            rule = event.rule or {}
+            print(f"  + {rule['id']}  [{rule['severity']}]  /{rule['pattern']}/")
+            print(f"    {event.cheat}: {event.reason}; fp={event.false_positives}")
+        elif event.status == "rejected":
+            rule = event.rule or {}
+            print(f"  ! {event.cheat}: rejected {rule.get('id', '<no-rule>')} — {event.reason}")
+        else:
+            print(f"  - {event.cheat}: {event.reason}")
     return 0
 
 
@@ -87,6 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
     lp = sub.add_parser("learn", help="grow the ruleset from the frozen cheat corpus (gated)")
     lp.add_argument("--rules", default=None, help="path to a rules file (default: shipped)")
     lp.add_argument("--dry-run", action="store_true", help="propose + gate, but don't write")
+    lp.add_argument("--json", action="store_true", help="emit proposed rules and gate results as JSON")
     lp.set_defaults(func=_cmd_learn)
 
     h = sub.add_parser("install-hook", help="install the pre-commit gate")
