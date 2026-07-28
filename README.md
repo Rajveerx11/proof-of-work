@@ -117,10 +117,10 @@ Run a reviewed coding-agent task in a fresh copy of its fixture:
 # tasks/python-fix-001.yaml
 version: 1
 id: python-fix-001
-fixture: fixtures/python-fix-001
+fixture: python-fix-001  # sibling directory: tasks/python-fix-001/
 instruction: Fix the failing behavior. Read TASK.md.
 expected:
-  argv: [python, -m, pytest, -q]
+  argv: [pytest, -q]
   timeout_seconds: 60
 ```
 
@@ -129,8 +129,9 @@ proof-of-work eval run tasks/python-fix-001.yaml \
   --agent-argv-json '["your-agent", "run", "{workspace}"]' --json
 ```
 
-Task YAML is deliberately declarative: it cannot choose the agent executable. The trusted
-operator supplies a JSON argv list, which must contain one standalone `{workspace}` token.
+The repository includes this runnable fixture at `tasks/python-fix-001.yaml`. Task YAML is
+deliberately declarative: it cannot choose the agent executable. The trusted operator supplies
+a JSON argv list, which must contain one standalone `{workspace}` token.
 Both commands run with `shell=False`, a minimal environment, a timeout, bounded output, and
 no fixture symlinks. The runner writes the instruction to `TASK.md` and deletes the workspace
 when done.

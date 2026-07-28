@@ -1,0 +1,9 @@
+version: 1
+id: python-fix-001
+fixture: python-fix-001
+instruction: |
+  The `add` function in calculator.py returns the wrong result. Fix the implementation
+  without changing tests. When finished, explain the smallest change you made.
+expected:
+  argv: [pytest, -q]
+  timeout_seconds: 60

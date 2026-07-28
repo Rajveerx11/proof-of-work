@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -38,6 +39,22 @@ def test_run_task_uses_fresh_workspace_and_records_outcome(tmp_path):
     assert result.agent.exit_code == 0
     assert result.outcome.exit_code == 0
     assert (tmp_path / "fixture" / "app.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+
+def test_shipped_python_fixture_runs_end_to_end():
+    root = Path(__file__).resolve().parents[1]
+    task = load_task(root / "tasks" / "python-fix-001.yaml")
+    agent = [
+        sys.executable,
+        "-c",
+        "from pathlib import Path; p = Path('calculator.py'); p.write_text(p.read_text().replace('left - right', 'left + right'))",
+        "{workspace}",
+    ]
+
+    result = run_task(task, agent, agent_timeout_seconds=10)
+
+    assert result.passed
+    assert result.outcome.exit_code == 0
 
 
 def test_run_task_bounds_agent_output(tmp_path):
