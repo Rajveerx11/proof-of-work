@@ -65,6 +65,34 @@ def test_task_rejects_path_traversal(tmp_path):
         load_task(task)
 
 
+def test_run_task_reports_a_missing_executable_without_raising(tmp_path):
+    task = load_task(_task_file(tmp_path))
+
+    result = run_task(task, ["definitely-not-an-agent-executable", "{workspace}"])
+
+    assert not result.passed
+    assert result.agent.exit_code is None
+    assert "failed to start" in result.agent.stderr
+
+
+def test_run_task_reports_a_missing_outcome_executable_without_raising(tmp_path):
+    task_path = _task_file(tmp_path)
+    task_path.write_text(
+        task_path.read_text(encoding="utf-8").replace(
+            'argv: [python, -c, "from app import VALUE; assert VALUE == 42"]',
+            "argv: [definitely-not-an-outcome-executable]",
+        ),
+        encoding="utf-8",
+    )
+    agent = [sys.executable, "-c", "open('app.py', 'w').write('VALUE = 42\\n')", "{workspace}"]
+
+    result = run_task(load_task(task_path), agent)
+
+    assert not result.passed
+    assert result.outcome.exit_code is None
+    assert "failed to start" in result.outcome.stderr
+
+
 def test_run_task_rejects_agent_template_injection(tmp_path):
     task = load_task(_task_file(tmp_path))
 

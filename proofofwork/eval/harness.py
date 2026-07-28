@@ -96,7 +96,10 @@ def _run(argv: list[str], cwd: Path, timeout_seconds: int) -> ProcessResult:
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    process = subprocess.Popen(argv, **kwargs)
+    try:
+        process = subprocess.Popen(argv, **kwargs)
+    except OSError as exc:
+        return ProcessResult(None, time.monotonic() - started, False, "", f"failed to start: {exc}")
     stdout = _OutputCollector(process.stdout)
     stderr = _OutputCollector(process.stderr)
     stdout.start()
