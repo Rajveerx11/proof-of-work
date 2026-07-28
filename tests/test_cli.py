@@ -42,6 +42,17 @@ def test_default_subcommand(monkeypatch):
     assert cli.main(["--no-tests"]) == 0
 
 
+def test_eval_run_json(monkeypatch, capsys):
+    import proofofwork.eval as eval_module
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    process = ProcessResult(0, 0.1, False, "", "")
+    monkeypatch.setattr(eval_module, "load_task", lambda *a: object())
+    monkeypatch.setattr(eval_module, "run_task", lambda *a, **k: EvalResult("task-1", process, process, True))
+    assert cli.main(["eval", "run", "task.yaml", "--agent-argv-json", '["agent", "{workspace}"]', "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["task_id"] == "task-1"
+
+
 def test_learn_dry_run_json(monkeypatch, capsys):
     calls = {}
 

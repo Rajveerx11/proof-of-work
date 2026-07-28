@@ -16,6 +16,7 @@ classifiers = [
 ]
 dependencies = [
   "cryptography>=42",  # Ed25519 signing of the tamper-evident log head
+  "PyYAML>=6.0.2",    # strict, safe-loaded eval task definitions
 ]
 # ponytail: no tree-sitter dep — every detector check is regex/stdlib-ast based. Add a
 # grammar dep only when a check actually needs a parse tree (deeper JS/TS semantics, v2).
