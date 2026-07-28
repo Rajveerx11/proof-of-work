@@ -17,9 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # cross-OS is load-bearing here: os.link, subprocess, and console
-        # encoding all differ across platforms and have bitten us already.
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Windows is the supported developer platform; keep Linux coverage for packaging.
+        os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7

@@ -9,6 +9,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -60,9 +61,14 @@ def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_t
 
         resolved_agent_argv = [str(workspace) if item == "{workspace}" else item for item in argv]
         agent = _run(resolved_agent_argv, workspace, agent_timeout_seconds)
-        outcome = _run(list(task.expected.argv), workspace, task.expected.timeout_seconds)
+        outcome = _run(_outcome_argv(task.expected.argv), workspace, task.expected.timeout_seconds)
         passed = not agent.timed_out and agent.exit_code == 0 and not outcome.timed_out and outcome.exit_code == 0
         return EvalResult(task.id, agent, outcome, passed)
+
+
+def _outcome_argv(argv: tuple[str, ...]) -> list[str]:
+    """Resolve the only task-defined executable placeholder to this interpreter."""
+    return [sys.executable if item == "{python}" else item for item in argv]
 
 
 def _agent_argv(argv: list[str] | tuple[str, ...]) -> tuple[str, ...]:
