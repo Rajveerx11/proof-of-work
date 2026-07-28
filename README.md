@@ -187,7 +187,7 @@ git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
 uv sync --extra dev      # .venv + project + pytest
 uv run pytest -q         # the suite (CI: 3 OS x 3 Python versions)
-uvx ruff check .         # lint
+uv run ruff check .      # lint (locked dev dependency)
 ```
 
 One package, `proofofwork/`:

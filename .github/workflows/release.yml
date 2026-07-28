@@ -17,6 +17,7 @@ jobs:
           python-version: "3.12"
       - run: uv sync --extra dev
       - run: uv run pytest -q
+      - run: uv run ruff check .
 
   build:
     needs: test

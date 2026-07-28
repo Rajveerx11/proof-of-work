@@ -47,7 +47,7 @@ def _git(root: str, *args: str) -> str:
     try:
         cp = subprocess.run(
             ["git", "-c", "core.quotepath=false", *args],
-            cwd=root, capture_output=True, text=True,
+            cwd=root, capture_output=True, text=True, check=False,
             encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError):

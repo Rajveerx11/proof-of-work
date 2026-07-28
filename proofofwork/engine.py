@@ -44,7 +44,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     for check_fn in ALL_CHECKS:
         try:
             findings.extend(check_fn(diff, root))
-        except Exception as e:  # a broken check must never crash the gate
+        except Exception as e:  # noqa: BLE001 - a broken check must never crash the gate
             findings.append(Finding(rule=f"check-error:{getattr(check_fn, '__name__', '?')}",
                                     severity=Severity.INFO, message=str(e)))
 
@@ -53,7 +53,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     try:
         from .core.detector import learned
         findings.extend(learned.check(diff, root))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - learned rules must not break the gate
         findings.append(Finding(rule="check-error:learned", severity=Severity.INFO,
                                 message=str(e)))
 
@@ -61,7 +61,9 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     coverage_baseline: float | None = None
     if run_tests:
         from .core.detector.coverage_delta import (
-            coverage_findings, read_baseline, write_baseline,
+            coverage_findings,
+            read_baseline,
+            write_baseline,
         )
         from .core.runner import run_tests as _run
         from .core.sandbox import get_sandbox
@@ -94,7 +96,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         from .log import build_envelope, record
         env = build_envelope(subject=_changeset_sha(diff), verdict=verdict)
         verdict.entry_hash = record(env, db_path)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - logging is strictly non-enforcing
         verdict.reasons.append(f"(log unavailable: {e})")
 
     return verdict

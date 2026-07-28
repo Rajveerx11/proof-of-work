@@ -29,5 +29,5 @@ def review(diff) -> dict | None:
         parsed = json.loads(resp.content[0].text)
         return {"suspicious": parsed.get("suspicious"), "reason": parsed.get("reason"),
                 "model": MODEL, "advisory": True}
-    except Exception as e:  # never raise — the judge must not break the gate
+    except Exception as e:  # noqa: BLE001 - the advisory judge must not break the gate
         return {"advisory": True, "error": str(e)}

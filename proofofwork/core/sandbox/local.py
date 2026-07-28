@@ -21,7 +21,7 @@ class LocalSandbox:
         try:
             p = subprocess.run(
                 cmd, cwd=cwd, env=full_env, timeout=timeout,
-                capture_output=True, text=True,
+                capture_output=True, text=True, check=False,
             )
             return RunOutput(code=p.returncode, stdout=p.stdout, stderr=p.stderr)
         except subprocess.TimeoutExpired as e:

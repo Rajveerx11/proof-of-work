@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from proofofwork import __version__
 from proofofwork.types import Severity, Verdict
@@ -28,6 +28,6 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
             "ruleset_version": "v1",
             "tests_passed": verdict.tests.passed,
             "coverage": verdict.tests.coverage,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     }

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 
 from cryptography.exceptions import InvalidSignature
@@ -111,7 +111,7 @@ def record(envelope: dict, db_path: str) -> str:
             "INSERT INTO entries(ts, prev_hash, entry_hash, envelope_json, head_sig) "
             "VALUES (?,?,?,?,?)",
             (
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 prev_hash,
                 entry_hash,
                 env_bytes.decode(),
