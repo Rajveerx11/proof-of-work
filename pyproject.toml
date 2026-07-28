@@ -16,13 +16,17 @@ classifiers = [
 ]
 dependencies = [
   "cryptography>=42",  # Ed25519 signing of the tamper-evident log head
+  "PyYAML>=6.0.2",    # strict, safe-loaded eval task definitions
 ]
 # ponytail: no tree-sitter dep — every detector check is regex/stdlib-ast based. Add a
 # grammar dep only when a check actually needs a parse tree (deeper JS/TS semantics, v2).
 
 [project.optional-dependencies]
 judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-key
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "ruff==0.16.0",
+]
 
 [project.scripts]
 proof-of-work = "proofofwork.interfaces.cli:main"

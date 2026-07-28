@@ -45,21 +45,21 @@ def _run_python(sandbox: Sandbox, root: str) -> TestResult | None:
     if _has_module(sandbox, root, "coverage"):
         # system temp, not `root`: `coverage json -o` takes an absolute path, so the
         # file never appears as an untracked entry inside the repo under test.
-        cov_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-        cov_file.close()
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as cov_file:
+            cov_path = cov_file.name
         try:
             run = sandbox.run(
                 [sys.executable, "-m", "coverage", "run", "-m", "pytest", "-q"],
                 cwd=root)
             sandbox.run(
-                [sys.executable, "-m", "coverage", "json", "-o", cov_file.name],
+                [sys.executable, "-m", "coverage", "json", "-o", cov_path],
                 cwd=root, timeout=120)
-            coverage = _read_coverage_json(cov_file.name)
+            coverage = _read_coverage_json(cov_path)
             return TestResult(ran=True, passed=(run.code == 0), coverage=coverage,
                               framework="pytest", raw=_tail(run))
         finally:
             try:
-                os.unlink(cov_file.name)
+                os.unlink(cov_path)
             except OSError:
                 pass
 

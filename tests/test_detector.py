@@ -6,8 +6,7 @@ import subprocess
 
 import pytest
 
-from proofofwork.core.detector import asserts, fake_pass, mocks, tests_integrity
-from proofofwork.core.detector import ALL_CHECKS
+from proofofwork.core.detector import ALL_CHECKS, asserts, fake_pass, mocks, tests_integrity
 from proofofwork.core.gitdiff import collect_diff
 from proofofwork.types import Diff, DiffFile, Severity
 

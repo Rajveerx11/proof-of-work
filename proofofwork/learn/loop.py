@@ -57,7 +57,7 @@ def _current_findings(diff: Diff, rules_path: str):
     for fn in ALL_CHECKS:
         try:
             findings.extend(fn(diff, "."))
-        except Exception:  # a broken built-in must not derail mining
+        except Exception:  # noqa: BLE001, S110 - a broken built-in must not derail mining
             pass
     findings.extend(_learned.apply_rules(diff, _learned.load_rules(rules_path)))
     return findings

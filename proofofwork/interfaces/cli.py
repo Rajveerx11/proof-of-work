@@ -77,6 +77,29 @@ def _cmd_verify_log(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_eval_run(args: argparse.Namespace) -> int:
+    from ..eval import TaskValidationError, load_task, run_task
+
+    try:
+        agent_argv = json.loads(args.agent_argv_json)
+        task = load_task(args.task)
+        result = run_task(task, agent_argv, agent_timeout_seconds=args.agent_timeout)
+    except (TaskValidationError, ValueError, json.JSONDecodeError) as exc:
+        print(f"eval configuration error: {exc}")
+        return 2
+
+    data = result.as_dict()
+    if args.json:
+        print(json.dumps(data, indent=2))
+    else:
+        print("PASS" if result.passed else "FAIL")
+        print(f"  task: {result.task_id}")
+        print(f"  agent: exit={result.agent.exit_code}, {result.agent.duration_seconds:.2f}s")
+        print(f"  outcome: exit={result.outcome.exit_code}, {result.outcome.duration_seconds:.2f}s")
+        print("  verification: outcome command only; trusted local inputs required")
+    return 0 if result.passed else 1
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="proof-of-work",
                                 description="Re-check an AI agent's 'done' against facts.")
@@ -109,10 +132,20 @@ def _build_parser() -> argparse.ArgumentParser:
     v.add_argument("--root", default=".")
     v.set_defaults(func=_cmd_verify_log)
 
+    e = sub.add_parser("eval", help="run a trusted local coding-agent benchmark")
+    e_sub = e.add_subparsers(dest="eval_cmd", required=True)
+    er = e_sub.add_parser("run", help="run one YAML task in a disposable workspace")
+    er.add_argument("task", help="path to a version-1 task YAML file")
+    er.add_argument("--agent-argv-json", required=True,
+                    help='JSON argv list from a trusted local command; include exactly one "{workspace}"')
+    er.add_argument("--agent-timeout", type=int, default=600)
+    er.add_argument("--json", action="store_true")
+    er.set_defaults(func=_cmd_eval_run)
+
     return p
 
 
-_SUBCOMMANDS = {"check", "learn", "install-hook", "verify-log"}
+_SUBCOMMANDS = {"check", "learn", "install-hook", "verify-log", "eval"}
 
 
 def main(argv: list[str] | None = None) -> int:

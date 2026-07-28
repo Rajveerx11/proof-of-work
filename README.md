@@ -55,7 +55,7 @@ Wire it as a gate the agent cannot skip:
 proof-of-work install-hook         # writes .git/hooks/pre-commit
 ```
 
-Needs Python 3.11+. The only runtime dependency is `cryptography` (to sign the log).
+Needs Python 3.11+. Runtime dependencies are `cryptography` (to sign the log) and PyYAML (to safely load strict eval tasks).
 
 ## How it works
 
@@ -109,6 +109,38 @@ The judge (`--judge`) is advisory only: its output is logged as metadata and nev
 the verdict. Set `ANTHROPIC_API_KEY` and install the extra
 (`pip install "proof-of-work-agent[judge]"`); without either, it is skipped.
 
+### Agent eval harness (Day 1 MVP)
+
+Run a reviewed coding-agent task in a fresh copy of its fixture:
+
+```yaml
+# tasks/python-fix-001.yaml
+version: 1
+id: python-fix-001
+fixture: fixtures/python-fix-001
+instruction: Fix the failing behavior. Read TASK.md.
+expected:
+  argv: [python, -m, pytest, -q]
+  timeout_seconds: 60
+```
+
+```bash
+proof-of-work eval run tasks/python-fix-001.yaml \
+  --agent-argv-json '["your-agent", "run", "{workspace}"]' --json
+```
+
+Task YAML is deliberately declarative: it cannot choose the agent executable. The trusted
+operator supplies a JSON argv list, which must contain one standalone `{workspace}` token.
+Both commands run with `shell=False`, a minimal environment, a timeout, bounded output, and
+no fixture symlinks. The runner writes the instruction to `TASK.md` and deletes the workspace
+when done.
+
+**Security boundary:** this is a trusted-local benchmark runner, not a sandbox. Reviewed
+fixtures and local agent commands may still access the host, network, or spawn child processes.
+Use a container or microVM before evaluating untrusted inputs. A passing result currently means
+only that the configured outcome command passed; test-integrity and Proof-of-Work gate checks
+will be added before benchmark results are presented as solved tasks.
+
 ## The tamper-evident log
 
 Every run is appended to a hash-chained SQLite log
@@ -155,7 +187,7 @@ git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
 uv sync --extra dev      # .venv + project + pytest
 uv run pytest -q         # the suite (CI: 3 OS x 3 Python versions)
-uvx ruff check .         # lint
+uv run ruff check .      # lint (locked dev dependency)
 ```
 
 One package, `proofofwork/`:

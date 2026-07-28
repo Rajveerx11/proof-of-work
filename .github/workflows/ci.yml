@@ -40,5 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+      - name: Install locked lint tooling
+        run: uv sync --extra dev
       - name: Ruff
-        run: uvx ruff check .
+        run: uv run ruff check .
