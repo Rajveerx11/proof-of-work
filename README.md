@@ -189,7 +189,7 @@ See [`plan/`](plan/) for the full spec and design history.
 git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
 uv sync --extra dev      # .venv + project + pytest
-uv run pytest -q         # the suite (CI: 3 OS x 3 Python versions)
+uv run pytest -q         # the suite (CI: Linux + Windows x Python 3.11–3.13)
 uv run ruff check .      # lint (locked dev dependency)
 ```
 

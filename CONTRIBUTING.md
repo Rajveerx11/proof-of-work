@@ -33,7 +33,7 @@ figure out the smallest check that catches it.
 git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
 uv sync --extra dev      # create .venv and install the project + pytest
-uv run pytest -q         # run the suite (CI runs it on 3 OS x 3 Python versions)
+uv run pytest -q         # run the suite (CI runs it on Linux + Windows x Python 3.11–3.13)
 uvx ruff check .         # lint
 ```
 
@@ -89,7 +89,7 @@ reproducible from facts alone. PRs that let the judge influence `passed` will be
 ## Pull requests
 
 - Keep diffs small and focused — one concern per PR.
-- **CI must pass**: tests on Linux/macOS/Windows x Python 3.11–3.13, plus `ruff`.
+- **CI must pass**: tests on Linux/Windows x Python 3.11–3.13, plus `ruff`.
 - **The tool gates its own PRs.** `proof-of-work check` runs on your diff via
   [`.github/workflows/self-check.yml`](.github/workflows/self-check.yml) — if you touch
   tests, expect it to notice.
