@@ -5,5 +5,5 @@ instruction: |
   The `add` function in calculator.py returns the wrong result. Fix the implementation
   without changing verify.py. When finished, explain the smallest change you made.
 expected:
-  argv: [python, verify.py]
+  argv: ["{python}", verify.py]
   timeout_seconds: 60

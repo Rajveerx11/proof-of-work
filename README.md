@@ -120,7 +120,7 @@ id: python-fix-001
 fixture: python-fix-001  # sibling directory: tasks/python-fix-001/
 instruction: Fix the failing behavior. Read TASK.md.
 expected:
-  argv: [python, verify.py]
+  argv: ["{python}", verify.py]
   timeout_seconds: 60
 ```
 
@@ -133,9 +133,10 @@ The repository includes this runnable fixture at `tasks/python-fix-001.yaml`. Ta
 deliberately declarative: it cannot choose the agent executable. The trusted operator supplies
 a JSON argv list, which must contain one standalone `{workspace}` token.
 Both commands run with `shell=False`, a minimal environment, a timeout, bounded output, and
-no fixture symlinks. The shipped Python fixture uses only the Python standard library, so it
-does not require pytest. The runner writes the instruction to `TASK.md` and deletes the
-workspace when done.
+no fixture symlinks. Expected commands may use `{python}`, resolved to the interpreter running
+Proof-of-Work. The shipped Python fixture uses only the standard library, so it does not require
+pytest or a separate `python` executable on `PATH`. The runner writes the instruction to
+`TASK.md` and deletes the workspace when done.
 
 **Security boundary:** this is a trusted-local benchmark runner, not a sandbox. Reviewed
 fixtures and local agent commands may still access the host, network, or spawn child processes.
