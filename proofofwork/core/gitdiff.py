@@ -140,7 +140,19 @@ def parse_patch(text: str) -> Diff:
 def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> Diff:
     cached = ["--cached"] if staged else []
     status_out = _git(root, "diff", "--name-status", "-z", *cached, base_ref)
-    unified_out = _git(root, "diff", "--unified=0", "--no-color", *cached, base_ref)
+    # Force raw textual diffing. A changeset-controlled .gitattributes file must not
+    # suppress detector input with ``-diff`` or invoke a textconv/external driver.
+    unified_out = _git(
+        root,
+        "diff",
+        "--unified=0",
+        "--no-color",
+        "--text",
+        "--no-ext-diff",
+        "--no-textconv",
+        *cached,
+        base_ref,
+    )
 
     lines_by_path = _parse_unified(unified_out)
     files: list[DiffFile] = []

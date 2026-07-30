@@ -30,7 +30,8 @@ def _changeset_sha(diff) -> str:
 def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           run_tests: bool = True, run_mutation: bool = False, use_judge: bool = False,
           update_baseline: bool = False, db_path: str | None = None,
-          coverage_drop_threshold: float = 2.0) -> Verdict:
+          coverage_drop_threshold: float = 2.0,
+          extra_findings: list[Finding] | None = None) -> Verdict:
     """Run the full gate against a changeset and return a fact-based Verdict."""
     from .core.detector import ALL_CHECKS
     from .core.gitdiff import collect_diff
@@ -40,7 +41,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
 
     diff = collect_diff(root, base_ref, staged=staged)
 
-    findings: list[Finding] = []
+    findings: list[Finding] = list(extra_findings or ())
     for check_fn in ALL_CHECKS:
         try:
             findings.extend(check_fn(diff, root))
