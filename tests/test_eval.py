@@ -168,6 +168,60 @@ def test_task_rejects_missing_protected_file(tmp_path):
         load_task(task)
 
 
+def test_generated_task_file_can_be_protected_without_false_positive(tmp_path):
+    task_path = _task_file(tmp_path)
+    fixture = tmp_path / "fixture"
+    (fixture / "TASK.md").write_text("stale fixture instruction\n", encoding="utf-8")
+    task_path.write_text(
+        task_path.read_text(encoding="utf-8")
+        + "gate:\n  protected_paths: [TASK.md]\n",
+        encoding="utf-8",
+    )
+    agent = [
+        sys.executable,
+        "-c",
+        "from pathlib import Path; Path('app.py').write_text('VALUE = 42\\n')",
+        "{workspace}",
+    ]
+
+    result = run_task(load_task(task_path), agent, agent_timeout_seconds=10)
+
+    assert result.gate.passed
+    assert result.outcome.exit_code == 0
+    assert result.passed
+
+
+def test_generated_task_file_tampering_is_blocked(tmp_path):
+    task_path = _task_file(tmp_path)
+    fixture = tmp_path / "fixture"
+    (fixture / "TASK.md").write_text("stale fixture instruction\n", encoding="utf-8")
+    task_path.write_text(
+        task_path.read_text(encoding="utf-8")
+        + "gate:\n  protected_paths: [TASK.md]\n",
+        encoding="utf-8",
+    )
+    agent = [
+        sys.executable,
+        "-c",
+        (
+            "from pathlib import Path; "
+            "Path('app.py').write_text('VALUE = 42\\n'); "
+            "Path('TASK.md').write_text('agent rewrite\\n')"
+        ),
+        "{workspace}",
+    ]
+
+    result = run_task(load_task(task_path), agent, agent_timeout_seconds=10)
+
+    assert result.outcome.exit_code == 0
+    assert not result.gate.passed
+    assert not result.passed
+    assert any(
+        finding.rule == "eval:protected-path-changed"
+        for finding in result.gate.findings
+    )
+
+
 def test_run_task_reports_a_missing_executable_without_raising(tmp_path):
     task = load_task(_task_file(tmp_path))
 

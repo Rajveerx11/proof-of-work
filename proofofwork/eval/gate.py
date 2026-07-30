@@ -53,13 +53,16 @@ def score_gate(
     """
     try:
         _prepare_baseline(fixture, gate_workspace, instruction)
+        protected_baseline = _protected_file_baseline(
+            gate_workspace,
+            protected_paths,
+        )
         _replace_worktree(gate_workspace, agent_workspace)
         # Intent-to-add makes new, untracked files visible to ``git diff HEAD``.
         _git(gate_workspace, "add", "--intent-to-add", "--all", "--force", "--", ".")
         protected_findings = _protected_file_findings(
-            fixture,
+            protected_baseline,
             gate_workspace,
-            protected_paths,
         )
         return engine.check(
             root=str(gate_workspace),
@@ -138,21 +141,31 @@ def _reject_unsafe_entries(workspace: Path) -> None:
                 raise ValueError(f"agent workspace contains a special file: {relative}")
 
 
-def _protected_file_findings(
-    fixture: Path,
+def _protected_file_baseline(
     gate_workspace: Path,
     protected_paths: tuple[str, ...],
+) -> dict[str, tuple[bytes, int]]:
+    return {
+        protected: (
+            (gate_workspace / protected).read_bytes(),
+            stat.S_IMODE((gate_workspace / protected).stat().st_mode),
+        )
+        for protected in protected_paths
+    }
+
+
+def _protected_file_findings(
+    protected_baseline: dict[str, tuple[bytes, int]],
+    gate_workspace: Path,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    for protected in protected_paths:
-        baseline = fixture / protected
+    for protected, (baseline_bytes, baseline_mode) in protected_baseline.items():
         candidate = gate_workspace / protected
         try:
             changed = (
                 not candidate.is_file()
-                or baseline.read_bytes() != candidate.read_bytes()
-                or stat.S_IMODE(baseline.stat().st_mode)
-                != stat.S_IMODE(candidate.stat().st_mode)
+                or baseline_bytes != candidate.read_bytes()
+                or baseline_mode != stat.S_IMODE(candidate.stat().st_mode)
             )
         except OSError:
             changed = True
