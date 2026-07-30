@@ -47,10 +47,17 @@ def test_eval_run_json(monkeypatch, capsys):
     from proofofwork.eval.harness import EvalResult, ProcessResult
 
     process = ProcessResult(0, 0.1, False, "", "")
+    gate = _verdict(True)
     monkeypatch.setattr(eval_module, "load_task", lambda *a: object())
-    monkeypatch.setattr(eval_module, "run_task", lambda *a, **k: EvalResult("task-1", process, process, True))
+    monkeypatch.setattr(
+        eval_module,
+        "run_task",
+        lambda *a, **k: EvalResult("task-1", process, process, True, gate=gate),
+    )
     assert cli.main(["eval", "run", "task.yaml", "--agent-argv-json", '["agent", "{workspace}"]', "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["task_id"] == "task-1"
+    data = json.loads(capsys.readouterr().out)
+    assert data["task_id"] == "task-1"
+    assert data["gate"]["passed"] is True
 
 
 def test_learn_dry_run_json(monkeypatch, capsys):

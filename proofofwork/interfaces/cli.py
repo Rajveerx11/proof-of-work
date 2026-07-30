@@ -96,7 +96,11 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
         print(f"  task: {result.task_id}")
         print(f"  agent: exit={result.agent.exit_code}, {result.agent.duration_seconds:.2f}s")
         print(f"  outcome: exit={result.outcome.exit_code}, {result.outcome.duration_seconds:.2f}s")
-        print("  verification: outcome command only; trusted local inputs required")
+        print(f"  gate: {'PASS' if result.gate.passed else 'FAIL'}")
+        for reason in result.gate.reasons:
+            print(f"    - {reason}")
+        print("  verification: outcome command + deterministic Proof-of-Work gate")
+        print("  security: trusted local inputs required")
     return 0 if result.passed else 1
 
 

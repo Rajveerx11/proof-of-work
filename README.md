@@ -109,7 +109,7 @@ The judge (`--judge`) is advisory only: its output is logged as metadata and nev
 the verdict. Set `ANTHROPIC_API_KEY` and install the extra
 (`pip install "proof-of-work-agent[judge]"`); without either, it is skipped.
 
-### Agent eval harness (Day 1 MVP)
+### Agent eval harness
 
 Run a reviewed coding-agent task in a fresh copy of its fixture:
 
@@ -122,6 +122,8 @@ instruction: Fix the failing behavior. Read TASK.md.
 expected:
   argv: ["{python}", verify.py]
   timeout_seconds: 60
+gate:
+  protected_paths: [verify.py]
 ```
 
 ```bash
@@ -135,14 +137,33 @@ a JSON argv list, which must contain one standalone `{workspace}` token.
 Both commands run with `shell=False`, a minimal environment, a timeout, bounded output, and
 no fixture symlinks. Expected commands may use `{python}`, resolved to the interpreter running
 Proof-of-Work. The shipped Python fixture uses only the standard library, so it does not require
-pytest or a separate `python` executable on `PATH`. The runner writes the instruction to
-`TASK.md` and deletes the workspace when done.
+pytest or a separate `python` executable on `PATH`. Gate scoring requires Git on `PATH`.
+The runner writes the instruction to `TASK.md` and deletes the workspace when done.
+Direct Python verifier scripts run through an isolated bootstrap, preventing agent-created
+`sitecustomize.py` or `usercustomize.py` startup hooks from executing before the verifier.
+
+After the agent exits, the harness captures its workspace once. Separate gate and outcome
+workspaces are created from that capture. POSIX process groups and Windows kill-on-close Job
+Objects stop ordinary surviving descendants from changing files between scoring and
+verification. The harness commits a separate copy of the reviewed fixture as an immutable
+baseline, mirrors the captured agent output into that repository, and scores the resulting diff
+with deterministic Proof-of-Work checks. Agent-created untracked files are included.
+The agent never works inside the scoring repository, so committing or editing its own Git index
+cannot hide changes. A task passes only when the agent exits successfully, the configured
+outcome command passes, and the Proof-of-Work gate passes. JSON output includes the full gate
+verdict, reasons, and findings.
+
+Task authors can list verifier files under `gate.protected_paths`. Any byte, mode, type,
+deletion, or rename change involving those files is a blocking finding. The shipped task
+protects `verify.py`, so an agent cannot turn the expected outcome into a fake pass.
 
 **Security boundary:** this is a trusted-local benchmark runner, not a sandbox. Reviewed
 fixtures and local agent commands may still access the host, network, or spawn child processes.
-Use a container or microVM before evaluating untrusted inputs. A passing result currently means
-only that the configured outcome command passed; test-integrity and Proof-of-Work gate checks
-will be added before benchmark results are presented as solved tasks.
+Use a container or microVM before evaluating untrusted inputs. Gate scoring checks the recorded
+agent diff for supported tampering patterns; it does not make host execution safe or prove that
+the task specification is complete. A deliberate same-user escape (for example, a POSIX child
+starting a new session or coordination through a pre-existing process) remains outside local
+process containment.
 
 ## The tamper-evident log
 

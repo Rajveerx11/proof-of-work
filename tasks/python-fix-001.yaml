@@ -7,3 +7,5 @@ instruction: |
 expected:
   argv: ["{python}", verify.py]
   timeout_seconds: 60
+gate:
+  protected_paths: [verify.py]
