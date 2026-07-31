@@ -48,16 +48,88 @@ def test_eval_run_json(monkeypatch, capsys):
 
     process = ProcessResult(0, 0.1, False, "", "")
     gate = _verdict(True)
+    recorded = {}
     monkeypatch.setattr(eval_module, "load_task", lambda *a: object())
     monkeypatch.setattr(
         eval_module,
         "run_task",
         lambda *a, **k: EvalResult("task-1", process, process, True, gate=gate),
     )
-    assert cli.main(["eval", "run", "task.yaml", "--agent-argv-json", '["agent", "{workspace}"]', "--json"]) == 0
+    monkeypatch.setattr(
+        eval_module,
+        "record_run",
+        lambda result, db: recorded.update(result=result, db=db) or 7,
+    )
+    assert cli.main([
+        "eval",
+        "run",
+        "task.yaml",
+        "--agent-argv-json",
+        '["agent", "{workspace}"]',
+        "--db",
+        "history.db",
+        "--json",
+    ]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["task_id"] == "task-1"
     assert data["gate"]["passed"] is True
+    assert data["history"] == {
+        "recorded": True,
+        "database": "history.db",
+        "run_id": 7,
+    }
+    assert recorded["db"] == "history.db"
+
+
+def test_eval_run_can_skip_history(monkeypatch, capsys):
+    import proofofwork.eval as eval_module
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    process = ProcessResult(0, 0.1, False, "", "")
+    monkeypatch.setattr(eval_module, "load_task", lambda *a: object())
+    monkeypatch.setattr(
+        eval_module,
+        "run_task",
+        lambda *a, **k: EvalResult("task-1", process, process, True, gate=_verdict(True)),
+    )
+    monkeypatch.setattr(
+        eval_module,
+        "record_run",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not record")),
+    )
+
+    assert cli.main([
+        "eval",
+        "run",
+        "task.yaml",
+        "--agent-argv-json",
+        '["agent", "{workspace}"]',
+        "--no-record",
+        "--json",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["history"] == {"recorded": False}
+
+
+def test_eval_report_json(tmp_path, capsys):
+    from proofofwork.eval import record_run
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    db = tmp_path / "history.db"
+    process = ProcessResult(0, 0.1, False, "", "")
+    record_run(EvalResult("task-1", process, process, True, gate=_verdict(True)), db)
+
+    assert cli.main([
+        "eval",
+        "report",
+        "--db",
+        str(db),
+        "--task-id",
+        "task-1",
+        "--json",
+    ]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["totals"]["runs"] == 1
+    assert data["runs"][0]["task_id"] == "task-1"
 
 
 def test_learn_dry_run_json(monkeypatch, capsys):
