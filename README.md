@@ -129,6 +129,9 @@ gate:
 ```bash
 proof-of-work eval run tasks/python-fix-001.yaml \
   --agent-argv-json '["your-agent", "run", "{workspace}"]' --json
+
+# compare recent results with the preceding equal-size window
+proof-of-work eval report --task-id python-fix-001
 ```
 
 The repository includes this runnable fixture at `tasks/python-fix-001.yaml`. Task YAML is
@@ -156,6 +159,18 @@ verdict, reasons, and findings.
 Task authors can list verifier files under `gate.protected_paths`. Any byte, mode, type,
 deletion, or rename change involving those files is a blocking finding. The shipped task
 protects `verify.py`, so an agent cannot turn the expected outcome into a fake pass.
+
+Each CLI eval run is recorded by default in `.proofofwork/eval-runs.db`. The SQLite history
+stores its UTC timestamp, task id, pass/fail state, exit codes, durations, timeout state,
+verification mode, and deterministic gate evidence. Agent stdout and stderr are deliberately
+not persisted. Use `--db <path>` to select another history, or `--no-record` for an ephemeral
+run.
+
+`proof-of-work eval report` shows all-time totals, recent runs, and pass-rate and duration
+deltas between the newest window and the preceding equal-size window. Filter with
+`--task-id`, tune output with `--window` and `--limit`, or emit machine-readable output with
+`--json`. Eval history is local operational data; unlike the signed verdict log below, it is
+not tamper-evident.
 
 **Security boundary:** this is a trusted-local benchmark runner, not a sandbox. Reviewed
 fixtures and local agent commands may still access the host, network, or spawn child processes.
@@ -225,6 +240,7 @@ proofofwork/
 │   ├── detector/      # the cheat checks (ALL_CHECKS registry)
 │   ├── runner.py      # re-run the real suite through the sandbox
 │   └── sandbox/       # isolation seam (local now; Docker/microVM later)
+├── eval/              # coding-agent harness, gate, SQLite history + trends
 ├── log/               # hash-chained, Ed25519-signed tamper-evident log
 ├── judge/             # advisory LLM judge (never signs)
 └── interfaces/        # cli.py, precommit, action.yml

@@ -78,7 +78,7 @@ def _cmd_verify_log(args: argparse.Namespace) -> int:
 
 
 def _cmd_eval_run(args: argparse.Namespace) -> int:
-    from ..eval import TaskValidationError, load_task, run_task
+    from ..eval import HistoryError, TaskValidationError, load_task, record_run, run_task
 
     try:
         agent_argv = json.loads(args.agent_argv_json)
@@ -89,6 +89,25 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
         return 2
 
     data = result.as_dict()
+    history_error = None
+    if args.no_record:
+        data["history"] = {"recorded": False}
+    else:
+        try:
+            run_id = record_run(result, args.db)
+        except HistoryError as exc:
+            history_error = str(exc)
+            data["history"] = {
+                "recorded": False,
+                "database": args.db,
+                "error": history_error,
+            }
+        else:
+            data["history"] = {
+                "recorded": True,
+                "database": args.db,
+                "run_id": run_id,
+            }
     if args.json:
         print(json.dumps(data, indent=2))
     else:
@@ -96,15 +115,116 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
         print(f"  task: {result.task_id}")
         print(f"  agent: exit={result.agent.exit_code}, {result.agent.duration_seconds:.2f}s")
         print(f"  outcome: exit={result.outcome.exit_code}, {result.outcome.duration_seconds:.2f}s")
-        print(f"  gate: {'PASS' if result.gate.passed else 'FAIL'}")
-        for reason in result.gate.reasons:
-            print(f"    - {reason}")
+        if result.gate is not None:
+            print(f"  gate: {'PASS' if result.gate.passed else 'FAIL'}")
+            for reason in result.gate.reasons:
+                print(f"    - {reason}")
+        if args.no_record:
+            print("  history: not recorded")
+        elif history_error is not None:
+            print(f"  history: ERROR: {history_error}")
+        else:
+            print(f"  history: run #{run_id} in {args.db}")
         print("  verification: outcome command + deterministic Proof-of-Work gate")
         print("  security: trusted local inputs required")
+    if history_error is not None:
+        return 2
     return 0 if result.passed else 1
 
 
+def _cmd_eval_report(args: argparse.Namespace) -> int:
+    from ..eval import HistoryError, build_report
+
+    try:
+        report = build_report(
+            args.db,
+            task_id=args.task_id,
+            window=args.window,
+            limit=args.limit,
+        )
+    except (HistoryError, ValueError) as exc:
+        print(f"eval history error: {exc}")
+        return 2
+
+    data = {"database": args.db, **report.as_dict()}
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+
+    totals = report.totals
+    scope = f"task {args.task_id}" if args.task_id else "all tasks"
+    print(f"EVAL HISTORY ({scope})")
+    print(f"  database: {args.db}")
+    if totals.runs == 0:
+        print("  no runs recorded")
+        return 0
+    print(
+        f"  runs: {totals.runs} "
+        f"({totals.passed} passed, {totals.failed} failed; "
+        f"{_percentage(totals.pass_rate)})"
+    )
+    print(
+        "  average duration: "
+        f"agent={totals.average_agent_duration_seconds:.2f}s, "
+        f"outcome={totals.average_outcome_duration_seconds:.2f}s"
+    )
+    trend = report.trend
+    if trend.window_size == 0:
+        print("  trend: need at least 2 runs")
+    else:
+        print(f"  trend: latest {trend.window_size} vs previous {trend.window_size}")
+        print(
+            "    pass rate: "
+            f"{_percentage(trend.recent.pass_rate)} vs "
+            f"{_percentage(trend.previous.pass_rate)} "
+            f"({_signed(trend.pass_rate_delta_percentage_points)} pp)"
+        )
+        print(
+            "    agent duration: "
+            f"{trend.recent.average_agent_duration_seconds:.2f}s vs "
+            f"{trend.previous.average_agent_duration_seconds:.2f}s "
+            f"({_signed(trend.average_agent_duration_delta_seconds)}s)"
+        )
+        print(
+            "    outcome duration: "
+            f"{trend.recent.average_outcome_duration_seconds:.2f}s vs "
+            f"{trend.previous.average_outcome_duration_seconds:.2f}s "
+            f"({_signed(trend.average_outcome_duration_delta_seconds)}s)"
+        )
+    print("  recent runs:")
+    for run in report.runs:
+        status = "PASS" if run.passed else "FAIL"
+        print(
+            f"    #{run.id} {run.recorded_at} {run.task_id}: {status} "
+            f"(agent={run.agent_duration_seconds:.2f}s, "
+            f"outcome={run.outcome_duration_seconds:.2f}s)"
+        )
+    return 0
+
+
+def _percentage(value: float | None) -> str:
+    return "n/a" if value is None else f"{value * 100:.1f}%"
+
+
+def _signed(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:+.2f}"
+
+
+def _report_bound(value: str) -> int:
+    from ..eval.history import MAX_REPORT_ROWS
+
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if not 1 <= parsed <= MAX_REPORT_ROWS:
+        raise argparse.ArgumentTypeError(f"must be from 1 to {MAX_REPORT_ROWS}")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
+    from ..eval import DEFAULT_HISTORY_DB
+
     p = argparse.ArgumentParser(prog="proof-of-work",
                                 description="Re-check an AI agent's 'done' against facts.")
     sub = p.add_subparsers(dest="cmd")
@@ -143,8 +263,19 @@ def _build_parser() -> argparse.ArgumentParser:
     er.add_argument("--agent-argv-json", required=True,
                     help='JSON argv list from a trusted local command; include exactly one "{workspace}"')
     er.add_argument("--agent-timeout", type=int, default=600)
+    er.add_argument("--db", default=DEFAULT_HISTORY_DB, help="SQLite eval history path")
+    er.add_argument("--no-record", action="store_true", help="do not persist this run")
     er.add_argument("--json", action="store_true")
     er.set_defaults(func=_cmd_eval_run)
+    ep = e_sub.add_parser("report", help="show persistent eval history and trends")
+    ep.add_argument("--db", default=DEFAULT_HISTORY_DB, help="SQLite eval history path")
+    ep.add_argument("--task-id", default=None, help="limit report to one task id")
+    ep.add_argument("--window", type=_report_bound, default=10,
+                    help="maximum runs in each trend window (default: 10)")
+    ep.add_argument("--limit", type=_report_bound, default=20,
+                    help="maximum recent runs to list (default: 20)")
+    ep.add_argument("--json", action="store_true")
+    ep.set_defaults(func=_cmd_eval_report)
 
     return p
 
