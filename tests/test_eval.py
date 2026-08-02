@@ -252,6 +252,20 @@ def test_task_rejects_unknown_fields(tmp_path):
         load_task(task)
 
 
+def test_legacy_version_one_task_without_v020_metadata_remains_loadable(tmp_path):
+    task_path = _task_file(tmp_path)
+    raw = task_path.read_text(encoding="utf-8")
+    for line in ("category: bug-fix\n", "difficulty: easy\n", "corpus_version: 0.2.0\n"):
+        raw = raw.replace(line, "")
+    task_path.write_text(raw, encoding="utf-8")
+
+    task = load_task(task_path)
+
+    assert task.category == "uncategorized"
+    assert task.difficulty == "unknown"
+    assert task.corpus_version == "unknown"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

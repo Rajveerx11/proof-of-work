@@ -172,6 +172,8 @@ token. All adapters run with `shell=False`, a minimal environment, a timeout, bo
 no fixture symlinks. Expected commands may use `{python}`, resolved to the interpreter running
 Proof-of-Work. The shipped Python fixture uses only the standard library, so it does not require
 pytest or a separate `python` executable on `PATH`. Gate scoring requires Git on `PATH`.
+Earlier version-one tasks without v0.2 metadata remain loadable and report their metadata as
+`uncategorized` or `unknown`.
 The runner writes the instruction to `TASK.md` and deletes the workspace when done.
 Direct Python verifier scripts run through an isolated bootstrap, preventing agent-created
 `sitecustomize.py` or `usercustomize.py` startup hooks from executing before the verifier.

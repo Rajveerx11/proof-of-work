@@ -95,9 +95,6 @@ def _parse_task(data: Any, task_dir: Path) -> EvalTask:
             "id",
             "fixture",
             "instruction",
-            "category",
-            "difficulty",
-            "corpus_version",
             "expected",
         },
     )
@@ -105,10 +102,22 @@ def _parse_task(data: Any, task_dir: Path) -> EvalTask:
         raise TaskValidationError("task version must be 1")
     task_id = _nonempty_string(data.get("id"), "id")
     instruction = _nonempty_string(data.get("instruction"), "instruction")
-    category = _choice(data.get("category"), "category", TASK_CATEGORIES)
-    difficulty = _choice(data.get("difficulty"), "difficulty", TASK_DIFFICULTIES)
-    corpus_version = _nonempty_string(data.get("corpus_version"), "corpus_version")
-    if not _CORPUS_VERSION.fullmatch(corpus_version):
+    category = (
+        _choice(data.get("category"), "category", TASK_CATEGORIES)
+        if "category" in data
+        else "uncategorized"
+    )
+    difficulty = (
+        _choice(data.get("difficulty"), "difficulty", TASK_DIFFICULTIES)
+        if "difficulty" in data
+        else "unknown"
+    )
+    corpus_version = (
+        _nonempty_string(data.get("corpus_version"), "corpus_version")
+        if "corpus_version" in data
+        else "unknown"
+    )
+    if corpus_version != "unknown" and not _CORPUS_VERSION.fullmatch(corpus_version):
         raise TaskValidationError("corpus_version must use MAJOR.MINOR.PATCH digits")
     fixture = _fixture_path(data.get("fixture"), task_dir)
     expected = data.get("expected")
