@@ -111,6 +111,9 @@ the verdict. Set `ANTHROPIC_API_KEY` and install the extra
 
 ### Agent eval harness
 
+See the [agent evaluation guide](docs/evaluation.md) for the complete corpus contract,
+adapter setup, report fields, methodology, compatibility notes, and security boundary.
+
 Run a reviewed coding-agent task in a fresh copy of its fixture:
 
 ```yaml
@@ -225,8 +228,8 @@ unlike the signed verdict log below, it is not tamper-evident.
 Each result uses one reviewed task fixture and one operator-selected agent invocation. A pass
 requires all three facts: successful agent exit, successful protected outcome verifier, and a
 clean deterministic anti-tampering gate. The SQLite record stores labels, task metadata, exit
-status, durations, redacted gate result codes, and provider-reported usage only. Comparisons use equal newest
-and preceding windows from local history. Missing agents, credentials, or usage data produce
+status, durations, redacted gate result codes, and provider-reported usage only. Comparisons use
+equal newest and preceding windows from local history. Missing agents, credentials, or usage data produce
 failures or unknown fields; the tool never substitutes estimated scores, tokens, cost, or model
 comparisons.
 
