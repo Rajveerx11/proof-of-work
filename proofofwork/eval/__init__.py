@@ -1,6 +1,6 @@
 """Trusted-local benchmark execution for coding agents."""
 
-from .harness import EvalResult, run_task
+from .harness import EvalResult, UsageMetrics, run_task
 from .history import (
     DEFAULT_HISTORY_DB,
     HistoryError,
@@ -20,6 +20,7 @@ __all__ = [
     "RunRecord",
     "TaskValidationError",
     "TrendReport",
+    "UsageMetrics",
     "build_report",
     "load_task",
     "record_run",

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from proofofwork.eval import EvalResult, TaskValidationError, load_task, run_task
+from proofofwork.eval import EvalResult, TaskValidationError, UsageMetrics, load_task, run_task
 from proofofwork.eval.harness import ProcessResult, _wrapper_python_executable
 
 
@@ -37,6 +37,115 @@ def test_eval_result_preserves_day_one_positional_constructor():
     assert result.verification == "outcome-command"
     assert result.gate is None
     assert result.as_dict()["gate"] is None
+    assert result.as_dict()["usage"] is None
+
+
+def test_usage_metrics_are_loaded_from_trusted_wrapper_output(tmp_path):
+    task = load_task(_task_file(tmp_path))
+    script = (
+        "import json, sys; "
+        "from pathlib import Path; "
+        "Path('app.py').write_text('VALUE = 42\\n'); "
+        "Path(sys.argv[2]).write_text(json.dumps(dict("
+        "input_tokens=1200, output_tokens=300, cost_usd=0.012345)))"
+    )
+
+    result = run_task(
+        task,
+        [sys.executable, "-c", script, "{workspace}", "{usage}"],
+        agent_timeout_seconds=10,
+    )
+
+    assert result.passed
+    assert result.usage == UsageMetrics(1200, 300, 12_345)
+    assert result.as_dict()["usage"] == {
+        "input_tokens": 1200,
+        "output_tokens": 300,
+        "total_tokens": 1500,
+        "cost_usd": 0.012345,
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"input_tokens": True, "output_tokens": 1, "cost_usd": 0},
+        {"input_tokens": 1, "output_tokens": -1, "cost_usd": 0},
+        {"input_tokens": 1, "output_tokens": 1, "cost_usd": "0.0000001"},
+        {"input_tokens": 1, "output_tokens": 1, "cost_usd": "NaN"},
+        {"input_tokens": 1, "output_tokens": 1, "cost_usd": "sNaN"},
+        {"input_tokens": 1, "output_tokens": 1, "cost_usd": "1e999999"},
+        {"input_tokens": 1, "output_tokens": 1, "cost_usd": "1e-100000000"},
+    ],
+)
+def test_usage_metrics_reject_malformed_wrapper_output(tmp_path, payload):
+    task = load_task(_task_file(tmp_path))
+    import base64
+    import json
+
+    encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+    script = (
+        "import base64, sys; "
+        "from pathlib import Path; "
+        "Path('app.py').write_text('VALUE = 42\\n'); "
+        "Path(sys.argv[2]).write_bytes(base64.b64decode(sys.argv[3]))"
+    )
+
+    result = run_task(
+        task,
+        [sys.executable, "-c", script, "{workspace}", "{usage}", encoded],
+        agent_timeout_seconds=10,
+    )
+
+    assert result.passed
+    assert result.usage is None
+    assert result.usage_error is not None
+
+
+@pytest.mark.parametrize(
+    "raw_cost",
+    ["1e-100000000", "0.123456000000000001", "9007199254.740992"],
+)
+def test_usage_metrics_validate_raw_json_numbers_without_float_rounding(tmp_path, raw_cost):
+    import base64
+
+    task = load_task(_task_file(tmp_path))
+    raw = (
+        '{"input_tokens":1,"output_tokens":1,"cost_usd":' + raw_cost + "}"
+    ).encode()
+    encoded = base64.b64encode(raw).decode()
+    script = (
+        "import base64, sys; "
+        "from pathlib import Path; "
+        "Path('app.py').write_text('VALUE = 42\\n'); "
+        "Path(sys.argv[2]).write_bytes(base64.b64decode(sys.argv[3]))"
+    )
+
+    result = run_task(
+        task,
+        [sys.executable, "-c", script, "{workspace}", "{usage}", encoded],
+        agent_timeout_seconds=10,
+    )
+
+    assert result.passed
+    assert result.usage is None
+    assert result.usage_error is not None
+
+
+def test_usage_placeholder_requires_wrapper_output(tmp_path):
+    task = load_task(_task_file(tmp_path))
+    script = "from pathlib import Path; Path('app.py').write_text('VALUE = 42\\n')"
+
+    result = run_task(
+        task,
+        [sys.executable, "-c", script, "{workspace}", "{usage}"],
+        agent_timeout_seconds=10,
+    )
+
+    assert result.passed
+    assert result.usage is None
+    assert "did not write" in result.usage_error
 
 
 def test_windows_wrapper_selects_base_interpreter(monkeypatch):

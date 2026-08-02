@@ -84,7 +84,7 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
         agent_argv = json.loads(args.agent_argv_json)
         task = load_task(args.task)
         result = run_task(task, agent_argv, agent_timeout_seconds=args.agent_timeout)
-    except (TaskValidationError, ValueError, json.JSONDecodeError) as exc:
+    except (TaskValidationError, TypeError, ValueError, json.JSONDecodeError) as exc:
         print(f"eval configuration error: {exc}")
         return 2
 
@@ -115,6 +115,16 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
         print(f"  task: {result.task_id}")
         print(f"  agent: exit={result.agent.exit_code}, {result.agent.duration_seconds:.2f}s")
         print(f"  outcome: exit={result.outcome.exit_code}, {result.outcome.duration_seconds:.2f}s")
+        if result.usage is not None:
+            print(
+                f"  usage: {result.usage.total_tokens} tokens "
+                f"(input={result.usage.input_tokens}, output={result.usage.output_tokens}), "
+                f"${result.usage.cost_usd:.6f} USD"
+            )
+        elif result.usage_error is not None:
+            print(f"  usage: unavailable ({result.usage_error})")
+        else:
+            print("  usage: not reported")
         if result.gate is not None:
             print(f"  gate: {'PASS' if result.gate.passed else 'FAIL'}")
             for reason in result.gate.reasons:
@@ -168,6 +178,14 @@ def _cmd_eval_report(args: argparse.Namespace) -> int:
         f"agent={totals.average_agent_duration_seconds:.2f}s, "
         f"outcome={totals.average_outcome_duration_seconds:.2f}s"
     )
+    if totals.usage_runs:
+        print(
+            f"  usage: {totals.total_tokens} tokens, "
+            f"${totals.total_cost_usd_micros / 1_000_000:.6f} USD "
+            f"across {totals.usage_runs}/{totals.runs} runs"
+        )
+    else:
+        print(f"  usage: not reported (0/{totals.runs} runs)")
     trend = report.trend
     if trend.window_size == 0:
         print("  trend: need at least 2 runs")
@@ -194,10 +212,21 @@ def _cmd_eval_report(args: argparse.Namespace) -> int:
     print("  recent runs:")
     for run in report.runs:
         status = "PASS" if run.passed else "FAIL"
+        usage_tokens = (
+            run.input_tokens + run.output_tokens
+            if run.input_tokens is not None and run.output_tokens is not None
+            else "n/a"
+        )
+        usage_cost = (
+            f"${run.cost_usd_micros / 1_000_000:.6f}"
+            if run.cost_usd_micros is not None
+            else "n/a"
+        )
         print(
             f"    #{run.id} {run.recorded_at} {run.task_id}: {status} "
             f"(agent={run.agent_duration_seconds:.2f}s, "
-            f"outcome={run.outcome_duration_seconds:.2f}s)"
+            f"outcome={run.outcome_duration_seconds:.2f}s, "
+            f"usage={usage_tokens} tokens, cost={usage_cost})"
         )
     return 0
 
@@ -260,8 +289,14 @@ def _build_parser() -> argparse.ArgumentParser:
     e_sub = e.add_subparsers(dest="eval_cmd", required=True)
     er = e_sub.add_parser("run", help="run one YAML task in a disposable workspace")
     er.add_argument("task", help="path to a version-1 task YAML file")
-    er.add_argument("--agent-argv-json", required=True,
-                    help='JSON argv list from a trusted local command; include exactly one "{workspace}"')
+    er.add_argument(
+        "--agent-argv-json",
+        required=True,
+        help=(
+            'trusted command JSON argv; include "{workspace}" and optionally "{usage}" '
+            "for wrapper-emitted token/cost JSON"
+        ),
+    )
     er.add_argument("--agent-timeout", type=int, default=600)
     er.add_argument("--db", default=DEFAULT_HISTORY_DB, help="SQLite eval history path")
     er.add_argument("--no-record", action="store_true", help="do not persist this run")

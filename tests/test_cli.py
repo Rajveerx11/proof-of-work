@@ -44,7 +44,7 @@ def test_default_subcommand(monkeypatch):
 
 def test_eval_run_json(monkeypatch, capsys):
     import proofofwork.eval as eval_module
-    from proofofwork.eval.harness import EvalResult, ProcessResult
+    from proofofwork.eval.harness import EvalResult, ProcessResult, UsageMetrics
 
     process = ProcessResult(0, 0.1, False, "", "")
     gate = _verdict(True)
@@ -53,7 +53,14 @@ def test_eval_run_json(monkeypatch, capsys):
     monkeypatch.setattr(
         eval_module,
         "run_task",
-        lambda *a, **k: EvalResult("task-1", process, process, True, gate=gate),
+        lambda *a, **k: EvalResult(
+            "task-1",
+            process,
+            process,
+            True,
+            gate=gate,
+            usage=UsageMetrics(1200, 300, 12_345),
+        ),
     )
     monkeypatch.setattr(
         eval_module,
@@ -73,12 +80,48 @@ def test_eval_run_json(monkeypatch, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["task_id"] == "task-1"
     assert data["gate"]["passed"] is True
+    assert data["usage"] == {
+        "input_tokens": 1200,
+        "output_tokens": 300,
+        "total_tokens": 1500,
+        "cost_usd": 0.012345,
+    }
     assert data["history"] == {
         "recorded": True,
         "database": "history.db",
         "run_id": 7,
     }
     assert recorded["db"] == "history.db"
+
+
+def test_eval_run_human_output_reports_usage(monkeypatch, capsys):
+    import proofofwork.eval as eval_module
+    from proofofwork.eval.harness import EvalResult, ProcessResult, UsageMetrics
+
+    process = ProcessResult(0, 0.1, False, "", "")
+    monkeypatch.setattr(eval_module, "load_task", lambda *a: object())
+    monkeypatch.setattr(
+        eval_module,
+        "run_task",
+        lambda *a, **k: EvalResult(
+            "task-1",
+            process,
+            process,
+            True,
+            gate=_verdict(True),
+            usage=UsageMetrics(10, 5, 100),
+        ),
+    )
+
+    assert cli.main([
+        "eval",
+        "run",
+        "task.yaml",
+        "--agent-argv-json",
+        '["agent", "{workspace}"]',
+        "--no-record",
+    ]) == 0
+    assert "usage: 15 tokens (input=10, output=5), $0.000100 USD" in capsys.readouterr().out
 
 
 def test_eval_run_can_skip_history(monkeypatch, capsys):

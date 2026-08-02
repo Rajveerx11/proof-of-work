@@ -130,6 +130,10 @@ gate:
 proof-of-work eval run tasks/python-fix-001.yaml \
   --agent-argv-json '["your-agent", "run", "{workspace}"]' --json
 
+# trusted wrappers can also report usage after the agent exits
+proof-of-work eval run tasks/python-fix-001.yaml \
+  --agent-argv-json '["your-wrapper", "{workspace}", "{usage}"]' --json
+
 # compare recent results with the preceding equal-size window
 proof-of-work eval report --task-id python-fix-001
 ```
@@ -162,11 +166,25 @@ protects `verify.py`, so an agent cannot turn the expected outcome into a fake p
 
 Each CLI eval run is recorded by default in `.proofofwork/eval-runs.db`. The SQLite history
 stores its UTC timestamp, task id, pass/fail state, exit codes, durations, timeout state,
-verification mode, and deterministic gate evidence. Agent stdout and stderr are deliberately
-not persisted. Use `--db <path>` to select another history, or `--no-record` for an ephemeral
-run.
+verification mode, deterministic gate evidence, and optional usage metrics. Agent stdout and
+stderr are deliberately not persisted. Use `--db <path>` to select another history, or
+`--no-record` for an ephemeral run.
 
-`proof-of-work eval report` shows all-time totals, recent runs, and pass-rate and duration
+Usage reporting is provider-neutral and opt-in. A trusted operator-owned wrapper can receive the
+standalone `{usage}` path in its argv and write this JSON after the underlying agent exits:
+
+```json
+{"input_tokens": 1200, "output_tokens": 300, "cost_usd": 0.012345}
+```
+
+The usage file is outside the evaluated workspace, bounded to 64 KiB, and validated before it is
+recorded. Cost is stored as integer USD micros to avoid aggregate floating-point drift. Wrappers
+must obtain metrics from their provider response and must not forward the usage path to the
+agent. Runs without wrapper metrics remain valid and report usage as unavailable; unknown usage
+is never counted as zero. Usage metrics do not influence the deterministic pass/fail verdict.
+
+`proof-of-work eval report` shows all-time totals, usage coverage, token/cost totals, recent runs,
+and pass-rate and duration
 deltas between the newest window and the preceding equal-size window. Filter with
 `--task-id`, tune output with `--window` and `--limit`, or emit machine-readable output with
 `--json`. Eval history is local operational data; unlike the signed verdict log below, it is

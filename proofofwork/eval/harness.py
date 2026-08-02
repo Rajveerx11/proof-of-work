@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from ..types import Verdict
@@ -22,6 +23,11 @@ from .gate import gate_failure, score_gate, snapshot_workspace
 from .task import EvalTask
 
 OUTPUT_LIMIT = 8_000
+USAGE_FILE_LIMIT = 64 * 1024
+_MAX_SQLITE_INTEGER = 2**63 - 1
+_MAX_COST_USD_MICROS = 2**53 - 1
+_USD_MICROS = Decimal(1_000_000)
+_MAX_COST_USD = Decimal(_MAX_COST_USD_MICROS) / _USD_MICROS
 _START_ERROR_MARKER = "__PROOFOFWORK_START_ERROR__"
 _WINDOWS_PROCESS_WRAPPER = """
 import json
@@ -63,6 +69,41 @@ class ProcessResult:
 
 
 @dataclass(frozen=True)
+class UsageMetrics:
+    input_tokens: int
+    output_tokens: int
+    cost_usd_micros: int
+
+    def __post_init__(self) -> None:
+        _token_count("input_tokens", self.input_tokens)
+        _token_count("output_tokens", self.output_tokens)
+        if (
+            not isinstance(self.cost_usd_micros, int)
+            or isinstance(self.cost_usd_micros, bool)
+            or not 0 <= self.cost_usd_micros <= _MAX_COST_USD_MICROS
+        ):
+            raise ValueError("cost_usd_micros must be a non-negative exact integer")
+        if self.input_tokens + self.output_tokens > _MAX_SQLITE_INTEGER:
+            raise ValueError("total token count is too large")
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def cost_usd(self) -> float:
+        return self.cost_usd_micros / 1_000_000
+
+    def as_dict(self) -> dict:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "cost_usd": self.cost_usd,
+        }
+
+
+@dataclass(frozen=True)
 class EvalResult:
     task_id: str
     agent: ProcessResult
@@ -70,6 +111,8 @@ class EvalResult:
     passed: bool
     verification: str = "outcome-command+proof-of-work-gate"
     gate: Verdict | None = None
+    usage: UsageMetrics | None = None
+    usage_error: str | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -77,6 +120,8 @@ class EvalResult:
             "agent": asdict(self.agent),
             "outcome": asdict(self.outcome),
             "gate": self.gate.as_dict() if self.gate is not None else None,
+            "usage": self.usage.as_dict() if self.usage is not None else None,
+            "usage_error": self.usage_error,
             "passed": self.passed,
             "verification": self.verification,
         }
@@ -99,7 +144,15 @@ def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_t
         shutil.rmtree(workspace / ".git", ignore_errors=True)
         (workspace / "TASK.md").write_text(task.instruction + "\n", encoding="utf-8")
 
-        resolved_agent_argv = [str(workspace) if item == "{workspace}" else item for item in argv]
+        usage_path = Path(temp_dir) / "usage.json"
+        resolved_agent_argv = [
+            str(workspace)
+            if item == "{workspace}"
+            else str(usage_path)
+            if item == "{usage}"
+            else item
+            for item in argv
+        ]
         agent = _run(resolved_agent_argv, workspace, agent_timeout_seconds)
         captured_workspace = Path(temp_dir) / "captured-workspace"
         outcome_workspace = Path(temp_dir) / "outcome-workspace"
@@ -139,7 +192,22 @@ def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_t
             and outcome.exit_code == 0
             and gate.passed
         )
-        return EvalResult(task.id, agent, outcome, passed, gate=gate)
+        usage = None
+        usage_error = None
+        if "{usage}" in argv:
+            try:
+                usage = _load_usage_metrics(usage_path)
+            except (OSError, TypeError, ValueError) as exc:
+                usage_error = str(exc)
+        return EvalResult(
+            task.id,
+            agent,
+            outcome,
+            passed,
+            gate=gate,
+            usage=usage,
+            usage_error=usage_error,
+        )
 
 
 def _outcome_argv(argv: tuple[str, ...]) -> list[str]:
@@ -161,9 +229,72 @@ def _agent_argv(argv: list[str] | tuple[str, ...]) -> tuple[str, ...]:
     if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(item, str) and item for item in argv):
         raise ValueError("agent argv must be a non-empty list of strings")
     placeholders = [item for item in argv if "{" in item or "}" in item]
-    if placeholders != ["{workspace}"]:
+    if placeholders.count("{workspace}") != 1:
         raise ValueError("agent argv must contain exactly one standalone '{workspace}' placeholder")
+    if placeholders.count("{usage}") > 1 or any(
+        item not in {"{workspace}", "{usage}"} for item in placeholders
+    ):
+        raise ValueError("agent argv may contain one optional standalone '{usage}' placeholder")
     return tuple(argv)
+
+
+def _load_usage_metrics(path: Path) -> UsageMetrics:
+    """Read bounded metrics emitted by the trusted operator-owned agent wrapper."""
+    if not path.exists():
+        raise ValueError("agent argv used '{usage}' but did not write the usage JSON file")
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("usage JSON must be a regular file")
+    if path.stat().st_size > USAGE_FILE_LIMIT:
+        raise ValueError(f"usage JSON must not exceed {USAGE_FILE_LIMIT} bytes")
+    try:
+        data = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_float=Decimal,
+            parse_constant=_invalid_json_constant,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read usage JSON: {exc}") from exc
+    if not isinstance(data, dict) or set(data) != {"input_tokens", "output_tokens", "cost_usd"}:
+        raise ValueError(
+            "usage JSON must contain exactly input_tokens, output_tokens, and cost_usd"
+        )
+    input_tokens = _token_count("input_tokens", data["input_tokens"])
+    output_tokens = _token_count("output_tokens", data["output_tokens"])
+    if input_tokens + output_tokens > _MAX_SQLITE_INTEGER:
+        raise ValueError("total token count is too large")
+    cost_usd_micros = _cost_usd_micros(data["cost_usd"])
+    return UsageMetrics(input_tokens, output_tokens, cost_usd_micros)
+
+
+def _invalid_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON number: {value}")
+
+
+def _token_count(name: str, value: object) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 0 <= value <= _MAX_SQLITE_INTEGER
+    ):
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _cost_usd_micros(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (Decimal, int, float)):
+        raise TypeError("cost_usd must be a non-negative JSON number with at most 6 decimals")
+    try:
+        cost = value if isinstance(value, Decimal) else Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("cost_usd must be a non-negative number with at most 6 decimals") from exc
+    if (
+        not cost.is_finite()
+        or cost.as_tuple().exponent < -6
+        or cost < 0
+        or cost > _MAX_COST_USD
+    ):
+        raise ValueError("cost_usd must be a non-negative number with at most 6 decimals")
+    return int(cost * _USD_MICROS)
 
 
 def _validate_fixture(fixture: Path) -> None:
