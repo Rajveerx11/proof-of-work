@@ -1,0 +1,14 @@
+version: 1
+id: typescript-feature-020
+fixture: typescript-feature-020
+category: feature
+difficulty: medium
+corpus_version: 0.2.0
+instruction: |
+  Implement initials in format.ts. Collapse whitespace, ignore empty input, and return the
+  uppercase first character of each word. Keep verify.mjs unchanged.
+expected:
+  argv: [node, verify.mjs]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.mjs]

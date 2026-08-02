@@ -1,6 +1,7 @@
 """Strict, declarative task definitions for trusted local benchmarks."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,21 @@ import yaml
 from yaml.tokens import AliasToken, AnchorToken
 
 MAX_TASK_BYTES = 64 * 1024
+TASK_CATEGORIES = frozenset(
+    {
+        "bug-fix",
+        "feature",
+        "multi-file",
+        "regression",
+        "verifier-tampering",
+        "deleted-tests",
+        "weakened-assertions",
+        "fake-pass",
+        "mocked-logic",
+    }
+)
+TASK_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
+_CORPUS_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 class TaskValidationError(ValueError):
@@ -33,6 +49,9 @@ class EvalTask:
     instruction: str
     expected: ExpectedOutcome
     gate: GatePolicy = GatePolicy()
+    category: str = "uncategorized"
+    difficulty: str = "unknown"
+    corpus_version: str = "unknown"
 
 
 def load_task(path: str | Path) -> EvalTask:
@@ -59,14 +78,47 @@ def _parse_task(data: Any, task_dir: Path) -> EvalTask:
         raise TaskValidationError("task must be a mapping")
     _only_keys(
         data,
-        {"version", "id", "fixture", "instruction", "expected", "gate"},
+        {
+            "version",
+            "id",
+            "fixture",
+            "instruction",
+            "category",
+            "difficulty",
+            "corpus_version",
+            "expected",
+            "gate",
+        },
         "task",
-        required={"version", "id", "fixture", "instruction", "expected"},
+        required={
+            "version",
+            "id",
+            "fixture",
+            "instruction",
+            "expected",
+        },
     )
     if data.get("version") != 1:
         raise TaskValidationError("task version must be 1")
     task_id = _nonempty_string(data.get("id"), "id")
     instruction = _nonempty_string(data.get("instruction"), "instruction")
+    category = (
+        _choice(data.get("category"), "category", TASK_CATEGORIES)
+        if "category" in data
+        else "uncategorized"
+    )
+    difficulty = (
+        _choice(data.get("difficulty"), "difficulty", TASK_DIFFICULTIES)
+        if "difficulty" in data
+        else "unknown"
+    )
+    corpus_version = (
+        _nonempty_string(data.get("corpus_version"), "corpus_version")
+        if "corpus_version" in data
+        else "unknown"
+    )
+    if corpus_version != "unknown" and not _CORPUS_VERSION.fullmatch(corpus_version):
+        raise TaskValidationError("corpus_version must use MAJOR.MINOR.PATCH digits")
     fixture = _fixture_path(data.get("fixture"), task_dir)
     expected = data.get("expected")
     if not isinstance(expected, dict):
@@ -80,11 +132,14 @@ def _parse_task(data: Any, task_dir: Path) -> EvalTask:
         raise TaskValidationError("expected.timeout_seconds must be an integer from 1 to 3600")
     gate = _parse_gate(data.get("gate"), fixture)
     return EvalTask(
-        task_id,
-        fixture,
-        instruction,
-        ExpectedOutcome(tuple(argv), timeout),
-        gate,
+        id=task_id,
+        fixture=fixture,
+        instruction=instruction,
+        expected=ExpectedOutcome(tuple(argv), timeout),
+        gate=gate,
+        category=category,
+        difficulty=difficulty,
+        corpus_version=corpus_version,
     )
 
 
@@ -144,6 +199,13 @@ def _nonempty_string(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise TaskValidationError(f"{name} must be a non-empty string")
     return value
+
+
+def _choice(value: Any, name: str, choices: frozenset[str]) -> str:
+    parsed = _nonempty_string(value, name)
+    if parsed not in choices:
+        raise TaskValidationError(f"{name} must be one of: {', '.join(sorted(choices))}")
+    return parsed
 
 
 def _fixture_path(value: Any, task_dir: Path) -> Path:

@@ -1,0 +1,14 @@
+version: 1
+id: javascript-multifile-013
+fixture: javascript-multifile-013
+category: multi-file
+difficulty: medium
+corpus_version: 0.2.0
+instruction: |
+  Add tax calculation across tax.js and checkout.js. applyTax must reject negative rates;
+  checkoutTotal must sum items then apply the rate. Keep verify.mjs unchanged.
+expected:
+  argv: [node, verify.mjs]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.mjs]

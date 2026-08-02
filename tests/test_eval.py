@@ -18,6 +18,9 @@ def _task_file(tmp_path, *, fixture="fixture", extra=""):
         """version: 1
 id: python-fix-001
 fixture: fixture
+category: bug-fix
+difficulty: easy
+corpus_version: 0.2.0
 instruction: Set VALUE to 42 in app.py.
 expected:
   argv: [python, -c, \"from app import VALUE; assert VALUE == 42\"]
@@ -166,6 +169,10 @@ def test_run_task_uses_fresh_workspace_and_records_outcome(tmp_path):
     assert result.agent.exit_code == 0
     assert result.outcome.exit_code == 0
     assert result.gate.passed
+    assert result.wall_time_seconds is not None
+    assert result.wall_time_seconds >= (
+        result.agent.duration_seconds + result.outcome.duration_seconds
+    )
     assert (tmp_path / "fixture" / "app.py").read_text(encoding="utf-8") == "VALUE = 0\n"
 
 
@@ -242,6 +249,42 @@ def test_task_rejects_unknown_fields(tmp_path):
     task = _task_file(tmp_path, extra="unsafe_command: rm -rf /\n")
 
     with pytest.raises(TaskValidationError, match="unknown field"):
+        load_task(task)
+
+
+def test_legacy_version_one_task_without_v020_metadata_remains_loadable(tmp_path):
+    task_path = _task_file(tmp_path)
+    raw = task_path.read_text(encoding="utf-8")
+    for line in ("category: bug-fix\n", "difficulty: easy\n", "corpus_version: 0.2.0\n"):
+        raw = raw.replace(line, "")
+    task_path.write_text(raw, encoding="utf-8")
+
+    task = load_task(task_path)
+
+    assert task.category == "uncategorized"
+    assert task.difficulty == "unknown"
+    assert task.corpus_version == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("category", "not-real", "category must be one of"),
+        ("difficulty", "impossible", "difficulty must be one of"),
+        ("corpus_version", "v2", "MAJOR.MINOR.PATCH"),
+    ],
+)
+def test_task_rejects_invalid_metadata(tmp_path, field, value, message):
+    task = _task_file(tmp_path)
+    raw = task.read_text(encoding="utf-8")
+    raw = raw.replace(f"{field}: " + {
+        "category": "bug-fix",
+        "difficulty": "easy",
+        "corpus_version": "0.2.0",
+    }[field], f"{field}: {value}")
+    task.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(TaskValidationError, match=message):
         load_task(task)
 
 

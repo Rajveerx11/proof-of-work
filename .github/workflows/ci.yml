@@ -43,3 +43,22 @@ jobs:
         run: uv sync --extra dev
       - name: Ruff
         run: uv run ruff check .
+
+  report:
+    name: static HTML report artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --extra dev
+      - name: Generate empty-history report
+        run: uv run proof-of-work eval report --format html --output report.html
+      - name: Upload static report
+        uses: actions/upload-artifact@v7
+        with:
+          name: proof-of-work-eval-report
+          path: report.html
+          if-no-files-found: error

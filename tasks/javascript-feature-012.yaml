@@ -1,0 +1,14 @@
+version: 1
+id: javascript-feature-012
+fixture: javascript-feature-012
+category: feature
+difficulty: easy
+corpus_version: 0.2.0
+instruction: |
+  Implement slugify in slug.js: lowercase, collapse non-alphanumeric runs to one hyphen,
+  and trim boundary hyphens. Keep verify.mjs unchanged.
+expected:
+  argv: [node, verify.mjs]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.mjs]

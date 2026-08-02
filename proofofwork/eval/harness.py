@@ -14,7 +14,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -113,6 +113,12 @@ class EvalResult:
     gate: Verdict | None = None
     usage: UsageMetrics | None = None
     usage_error: str | None = None
+    agent_label: str | None = None
+    model_label: str | None = None
+    category: str | None = None
+    difficulty: str | None = None
+    corpus_version: str | None = None
+    wall_time_seconds: float | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -122,12 +128,25 @@ class EvalResult:
             "gate": self.gate.as_dict() if self.gate is not None else None,
             "usage": self.usage.as_dict() if self.usage is not None else None,
             "usage_error": self.usage_error,
+            "agent_label": self.agent_label,
+            "model_label": self.model_label,
+            "category": self.category,
+            "difficulty": self.difficulty,
+            "corpus_version": self.corpus_version,
+            "wall_time_seconds": self.wall_time_seconds,
             "passed": self.passed,
             "verification": self.verification,
         }
 
 
-def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_timeout_seconds: int = 600) -> EvalResult:
+def run_task(
+    task: EvalTask,
+    agent_argv: list[str] | tuple[str, ...],
+    *,
+    agent_timeout_seconds: int = 600,
+    agent_label: str | None = None,
+    model_label: str | None = None,
+) -> EvalResult:
     """Run a task with a CLI-selected agent argv containing exactly `{workspace}`.
 
     YAML never controls the agent executable. The task's outcome command is executed
@@ -137,6 +156,7 @@ def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_t
     if not isinstance(agent_timeout_seconds, int) or not 1 <= agent_timeout_seconds <= 3600:
         raise ValueError("agent_timeout_seconds must be an integer from 1 to 3600")
     _validate_fixture(task.fixture)
+    evaluation_started = time.monotonic()
 
     with tempfile.TemporaryDirectory(prefix="proof-of-work-eval-") as temp_dir:
         workspace = Path(temp_dir) / "workspace"
@@ -199,7 +219,7 @@ def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_t
                 usage = _load_usage_metrics(usage_path)
             except (OSError, TypeError, ValueError) as exc:
                 usage_error = str(exc)
-        return EvalResult(
+        result = EvalResult(
             task.id,
             agent,
             outcome,
@@ -207,7 +227,13 @@ def run_task(task: EvalTask, agent_argv: list[str] | tuple[str, ...], *, agent_t
             gate=gate,
             usage=usage,
             usage_error=usage_error,
+            agent_label=agent_label,
+            model_label=model_label,
+            category=task.category,
+            difficulty=task.difficulty,
+            corpus_version=task.corpus_version,
         )
+    return replace(result, wall_time_seconds=time.monotonic() - evaluation_started)
 
 
 def _outcome_argv(argv: tuple[str, ...]) -> list[str]:

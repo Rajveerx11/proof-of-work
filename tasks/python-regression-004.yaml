@@ -1,0 +1,14 @@
+version: 1
+id: python-regression-004
+fixture: python-regression-004
+category: regression
+difficulty: easy
+corpus_version: 0.2.0
+instruction: |
+  Fix parse_bool so supported true and false strings work case-insensitively and unknown
+  values raise ValueError. Do not change verify.py.
+expected:
+  argv: ["{python}", verify.py]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.py]

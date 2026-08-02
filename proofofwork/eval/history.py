@@ -18,6 +18,15 @@ _USAGE_COLUMNS = {
     "output_tokens": "INTEGER CHECK(output_tokens >= 0)",
     "cost_usd_micros": "INTEGER CHECK(cost_usd_micros >= 0)",
 }
+_METADATA_COLUMNS = {
+    "agent_label": "TEXT",
+    "model_label": "TEXT",
+    "category": "TEXT",
+    "difficulty": "TEXT",
+    "corpus_version": "TEXT",
+    "wall_time_seconds": "REAL CHECK(wall_time_seconds >= 0)",
+}
+_ADDITIONAL_COLUMNS = {**_USAGE_COLUMNS, **_METADATA_COLUMNS}
 
 
 class HistoryError(RuntimeError):
@@ -42,14 +51,56 @@ class RunRecord:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd_micros: int | None = None
+    agent_label: str | None = None
+    model_label: str | None = None
+    category: str | None = None
+    difficulty: str | None = None
+    corpus_version: str | None = None
+    recorded_wall_time_seconds: float | None = None
+
+    @property
+    def wall_time_seconds(self) -> float:
+        if self.recorded_wall_time_seconds is not None:
+            return self.recorded_wall_time_seconds
+        return self.agent_duration_seconds + self.outcome_duration_seconds
+
+    @property
+    def failure_reasons(self) -> tuple[str, ...]:
+        if self.passed:
+            return ()
+        reasons: list[str] = []
+        if self.agent_timed_out:
+            reasons.append("agent timed out")
+        elif self.agent_exit_code is None:
+            reasons.append("agent failed to start")
+        elif self.agent_exit_code != 0:
+            reasons.append(f"agent exited with code {self.agent_exit_code}")
+        if self.outcome_timed_out:
+            reasons.append("outcome verifier timed out")
+        elif self.outcome_exit_code is None:
+            reasons.append("outcome verifier failed to start")
+        elif self.outcome_exit_code != 0:
+            reasons.append(f"outcome verifier exited with code {self.outcome_exit_code}")
+        if self.gate_passed is False:
+            gate_reasons = self.gate.get("reasons") if isinstance(self.gate, dict) else None
+            if isinstance(gate_reasons, list):
+                reasons.extend(reason for reason in gate_reasons if isinstance(reason, str))
+            if not gate_reasons:
+                reasons.append("deterministic gate failed")
+        return tuple(dict.fromkeys(reasons or ["verification failed"]))
 
     def as_dict(self) -> dict:
         return {
             "id": self.id,
             "recorded_at": self.recorded_at,
             "task_id": self.task_id,
+            "category": self.category,
+            "difficulty": self.difficulty,
+            "corpus_version": self.corpus_version,
             "passed": self.passed,
             "agent": {
+                "label": self.agent_label,
+                "model": self.model_label,
                 "exit_code": self.agent_exit_code,
                 "duration_seconds": self.agent_duration_seconds,
                 "timed_out": self.agent_timed_out,
@@ -61,6 +112,8 @@ class RunRecord:
             },
             "gate_passed": self.gate_passed,
             "verification": self.verification,
+            "wall_time_seconds": self.wall_time_seconds,
+            "failure_reasons": list(self.failure_reasons),
             "gate": self.gate,
             "usage": (
                 {
@@ -90,6 +143,7 @@ class RunSummary:
     total_output_tokens: int = 0
     total_tokens: int = 0
     total_cost_usd_micros: int = 0
+    total_wall_time_seconds: float = 0.0
 
     def as_dict(self) -> dict:
         return {
@@ -99,6 +153,7 @@ class RunSummary:
             "pass_rate": self.pass_rate,
             "average_agent_duration_seconds": self.average_agent_duration_seconds,
             "average_outcome_duration_seconds": self.average_outcome_duration_seconds,
+            "total_wall_time_seconds": self.total_wall_time_seconds,
             "usage": {
                 "runs": self.usage_runs,
                 "total_input_tokens": self.total_input_tokens,
@@ -166,12 +221,12 @@ def record_run(
     """Persist one eval summary and return its monotonic database id.
 
     Process output is deliberately excluded. Exit status, timing, timeout state,
-    verification mode, and deterministic gate evidence are retained.
+    verification mode, and redacted deterministic gate result codes are retained.
     """
     timestamp = recorded_at or datetime.now(UTC)
     if timestamp.tzinfo is None:
         raise ValueError("recorded_at must include a timezone")
-    gate = result.gate.as_dict() if result.gate is not None else None
+    gate = _persisted_gate(result.gate) if result.gate is not None else None
     usage = result.usage
     gate_json = (
         json.dumps(gate, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -188,8 +243,10 @@ def record_run(
                 agent_exit_code, agent_duration_seconds, agent_timed_out,
                 outcome_exit_code, outcome_duration_seconds, outcome_timed_out,
                 gate_passed, verification, gate_json,
-                input_tokens, output_tokens, cost_usd_micros
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                input_tokens, output_tokens, cost_usd_micros,
+                agent_label, model_label, category, difficulty, corpus_version,
+                wall_time_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 timestamp.astimezone(UTC).isoformat(),
@@ -207,6 +264,16 @@ def record_run(
                 usage.input_tokens if usage is not None else None,
                 usage.output_tokens if usage is not None else None,
                 usage.cost_usd_micros if usage is not None else None,
+                result.agent_label,
+                result.model_label,
+                result.category,
+                result.difficulty,
+                result.corpus_version,
+                (
+                    result.wall_time_seconds
+                    if result.wall_time_seconds is not None
+                    else result.agent.duration_seconds + result.outcome.duration_seconds
+                ),
             ),
         )
         conn.commit()
@@ -257,7 +324,12 @@ def build_report(
                 COUNT(input_tokens) AS usage_runs,
                 COALESCE(exact_sum(input_tokens), '0') AS total_input_tokens,
                 COALESCE(exact_sum(output_tokens), '0') AS total_output_tokens,
-                COALESCE(exact_sum(cost_usd_micros), '0') AS total_cost_usd_micros
+                COALESCE(exact_sum(cost_usd_micros), '0') AS total_cost_usd_micros,
+                COALESCE(SUM(COALESCE(
+                    wall_time_seconds,
+                    agent_duration_seconds + outcome_duration_seconds
+                )), 0)
+                    AS total_wall_time_seconds
             FROM eval_runs
             {where}
             """,
@@ -332,12 +404,18 @@ def _connect_for_write(db_path: str | Path) -> sqlite3.Connection:
                 gate_json TEXT,
                 input_tokens INTEGER CHECK(input_tokens >= 0),
                 output_tokens INTEGER CHECK(output_tokens >= 0),
-                cost_usd_micros INTEGER CHECK(cost_usd_micros >= 0)
+                cost_usd_micros INTEGER CHECK(cost_usd_micros >= 0),
+                agent_label TEXT,
+                model_label TEXT,
+                category TEXT,
+                difficulty TEXT,
+                corpus_version TEXT,
+                wall_time_seconds REAL CHECK(wall_time_seconds >= 0)
             )
             """
         )
         columns = _history_columns(conn)
-        for name, definition in _USAGE_COLUMNS.items():
+        for name, definition in _ADDITIONAL_COLUMNS.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE eval_runs ADD COLUMN {name} {definition}")
         conn.execute(
@@ -384,7 +462,7 @@ def _migrate_existing_history(path: Path) -> None:
         probe = sqlite3.connect(path)
         if not _history_table_exists(probe):
             return
-        missing_columns = _USAGE_COLUMNS.keys() - _history_columns(probe)
+        missing_columns = _ADDITIONAL_COLUMNS.keys() - _history_columns(probe)
     except sqlite3.Error as exc:
         raise HistoryError(f"cannot inspect eval history: {exc}") from exc
     finally:
@@ -430,6 +508,7 @@ def _summary_from_total(row: sqlite3.Row) -> RunSummary:
         total_output_tokens=int(row["total_output_tokens"]),
         total_tokens=int(row["total_input_tokens"]) + int(row["total_output_tokens"]),
         total_cost_usd_micros=int(row["total_cost_usd_micros"]),
+        total_wall_time_seconds=float(row["total_wall_time_seconds"]),
     )
 
 
@@ -459,6 +538,15 @@ def _summary_from_rows(rows: list[sqlite3.Row]) -> RunSummary:
         total_output_tokens=total_output_tokens,
         total_tokens=total_input_tokens + total_output_tokens,
         total_cost_usd_micros=sum(int(row["cost_usd_micros"]) for row in metered),
+        total_wall_time_seconds=sum(
+            (
+                float(row["wall_time_seconds"])
+                if row["wall_time_seconds"] is not None
+                else float(row["agent_duration_seconds"])
+                + float(row["outcome_duration_seconds"])
+            )
+            for row in rows
+        ),
     )
 
 
@@ -519,7 +607,28 @@ def _record_from_row(row: sqlite3.Row) -> RunRecord:
         input_tokens=row["input_tokens"],
         output_tokens=row["output_tokens"],
         cost_usd_micros=row["cost_usd_micros"],
+        agent_label=row["agent_label"],
+        model_label=row["model_label"],
+        category=row["category"],
+        difficulty=row["difficulty"],
+        corpus_version=row["corpus_version"],
+        recorded_wall_time_seconds=row["wall_time_seconds"],
     )
+
+
+def _persisted_gate(gate) -> dict:
+    """Keep verdict structure needed for reporting without workspace-derived content."""
+    findings = [
+        {"rule": finding.rule, "severity": finding.severity.value}
+        for finding in gate.findings
+    ]
+    reasons = [
+        f"{finding.severity.value.upper()} {finding.rule}"
+        for finding in gate.findings
+    ]
+    if not reasons:
+        reasons = ["no cheat signals" if gate.passed else "deterministic gate failed"]
+    return {"passed": gate.passed, "reasons": reasons, "findings": findings}
 
 
 def _validate_report_bound(name: str, value: int) -> None:

@@ -10,7 +10,7 @@ import pytest
 from proofofwork.eval import EvalResult, UsageMetrics
 from proofofwork.eval.harness import ProcessResult
 from proofofwork.eval.history import HistoryError, build_report, record_run
-from proofofwork.types import Finding, Severity, Verdict
+from proofofwork.types import Finding, Severity, TestResult, Verdict
 
 
 def _result(
@@ -164,7 +164,17 @@ def test_legacy_history_is_migrated_without_losing_runs(tmp_path):
     assert new_id == 2
     with sqlite3.connect(db) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(eval_runs)")}
-    assert {"input_tokens", "output_tokens", "cost_usd_micros"} <= columns
+    assert {
+        "input_tokens",
+        "output_tokens",
+        "cost_usd_micros",
+        "agent_label",
+        "model_label",
+        "category",
+        "difficulty",
+        "corpus_version",
+        "wall_time_seconds",
+    } <= columns
 
 
 def test_report_filters_one_task_without_affecting_all_task_totals(tmp_path):
@@ -192,6 +202,58 @@ def test_history_does_not_persist_process_output(tmp_path):
     assert secret not in str(report.as_dict())
     for file in tmp_path.glob("history.db*"):
         assert secret.encode() not in file.read_bytes()
+
+
+def test_history_redacts_gate_workspace_content_and_test_output(tmp_path):
+    db = tmp_path / "history.db"
+    secret = "workspace-secret-34d1e9"
+    process = ProcessResult(1, 0.1, False, "", "")
+    gate = Verdict(
+        passed=False,
+        reasons=[f"BLOCK secret: {secret}"],
+        findings=[
+            Finding(
+                "secret-rule",
+                Severity.BLOCK,
+                f"message {secret}",
+                file=f"{secret}.py",
+                line=3,
+                evidence=f"token = '{secret}'",
+            )
+        ],
+        tests=TestResult(ran=True, passed=False, raw=secret),
+    )
+
+    record_run(EvalResult("task-1", process, process, False, gate=gate), db)
+    report = build_report(db)
+
+    assert report.runs[0].gate == {
+        "passed": False,
+        "reasons": ["BLOCK secret-rule"],
+        "findings": [{"rule": "secret-rule", "severity": "block"}],
+    }
+    assert secret not in str(report.as_dict())
+    for file in tmp_path.glob("history.db*"):
+        assert secret.encode() not in file.read_bytes()
+
+
+def test_recorded_evaluation_wall_time_includes_more_than_subprocess_durations(tmp_path):
+    db = tmp_path / "history.db"
+    result = _result("task-1", True, agent_seconds=1.0, outcome_seconds=0.25)
+    result = EvalResult(
+        result.task_id,
+        result.agent,
+        result.outcome,
+        result.passed,
+        gate=result.gate,
+        wall_time_seconds=2.5,
+    )
+
+    record_run(result, db)
+    report = build_report(db)
+
+    assert report.runs[0].wall_time_seconds == 2.5
+    assert report.totals.total_wall_time_seconds == 2.5
 
 
 def test_report_closes_database_handles_on_windows(tmp_path):

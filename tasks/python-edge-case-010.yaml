@@ -1,0 +1,14 @@
+version: 1
+id: python-edge-case-010
+fixture: python-edge-case-010
+category: bug-fix
+difficulty: medium
+corpus_version: 0.2.0
+instruction: |
+  Fix median so odd and even non-empty sequences return the mathematical median without
+  mutating the input. Raise ValueError for an empty sequence. Do not change verify.py.
+expected:
+  argv: ["{python}", verify.py]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.py]
