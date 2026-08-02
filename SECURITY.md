@@ -12,8 +12,9 @@ cross-repo, un-forgeable proof — is a v2 goal. Please frame reports against th
 
 By design, the tool also:
 
-- runs a repository's **real test suite** in a sandbox (v1: local subprocess) — treat
-  untrusted repositories accordingly, and
+- runs a repository's **real test suite** as a contained local subprocess. This is a
+  trusted-local runner, not a security sandbox; reviewed commands can access the host and
+  network, so use a container or microVM for untrusted repositories, and
 - never lets the optional LLM judge influence the signed verdict.
 
 ## Reporting a vulnerability

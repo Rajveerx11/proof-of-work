@@ -1,6 +1,9 @@
 version: 1
 id: python-fix-001
 fixture: python-fix-001
+category: bug-fix
+difficulty: easy
+corpus_version: 0.2.0
 instruction: |
   The `add` function in calculator.py returns the wrong result. Fix the implementation
   without changing verify.py. When finished, explain the smallest change you made.

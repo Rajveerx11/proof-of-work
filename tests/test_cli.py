@@ -175,6 +175,47 @@ def test_eval_report_json(tmp_path, capsys):
     assert data["runs"][0]["task_id"] == "task-1"
 
 
+def test_eval_report_html_writes_static_file(tmp_path, capsys):
+    from proofofwork.eval import record_run
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    db = tmp_path / "history.db"
+    output = tmp_path / "report.html"
+    process = ProcessResult(0, 0.1, False, "", "")
+    record_run(
+        EvalResult(
+            "task-1",
+            process,
+            process,
+            True,
+            gate=_verdict(True),
+            agent_label="Codex",
+            model_label="model-1",
+            category="bug-fix",
+            difficulty="easy",
+            corpus_version="0.2.0",
+        ),
+        db,
+    )
+
+    assert cli.main([
+        "eval",
+        "report",
+        "--db",
+        str(db),
+        "--format",
+        "html",
+        "--output",
+        str(output),
+    ]) == 0
+    document = output.read_text(encoding="utf-8")
+    assert "Agent evaluation report" in document
+    assert "Codex" in document
+    assert "model-1" in document
+    assert str(db) not in document
+    assert f"HTML report written to {output}" in capsys.readouterr().out
+
+
 def test_learn_dry_run_json(monkeypatch, capsys):
     calls = {}
 

@@ -1,0 +1,14 @@
+version: 1
+id: javascript-regression-014
+fixture: javascript-regression-014
+category: regression
+difficulty: easy
+corpus_version: 0.2.0
+instruction: |
+  Fix parseBoolean for true/false, yes/no, and 1/0 strings case-insensitively. Unknown values
+  must throw TypeError. Keep verify.mjs unchanged.
+expected:
+  argv: [node, verify.mjs]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.mjs]

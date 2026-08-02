@@ -1,5 +1,11 @@
 """Trusted-local benchmark execution for coding agents."""
 
+from .adapters import (
+    ADAPTERS,
+    AdapterValidationError,
+    AgentInvocation,
+    build_agent_invocation,
+)
 from .harness import EvalResult, UsageMetrics, run_task
 from .history import (
     DEFAULT_HISTORY_DB,
@@ -9,10 +15,14 @@ from .history import (
     build_report,
     record_run,
 )
+from .report import render_html
 from .task import EvalTask, GatePolicy, TaskValidationError, load_task
 
 __all__ = [
+    "ADAPTERS",
     "DEFAULT_HISTORY_DB",
+    "AdapterValidationError",
+    "AgentInvocation",
     "EvalResult",
     "EvalTask",
     "GatePolicy",
@@ -21,8 +31,10 @@ __all__ = [
     "TaskValidationError",
     "TrendReport",
     "UsageMetrics",
+    "build_agent_invocation",
     "build_report",
     "load_task",
     "record_run",
+    "render_html",
     "run_task",
 ]

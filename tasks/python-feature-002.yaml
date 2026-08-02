@@ -1,0 +1,14 @@
+version: 1
+id: python-feature-002
+fixture: python-feature-002
+category: feature
+difficulty: easy
+corpus_version: 0.2.0
+instruction: |
+  Implement slugify in text_utils.py. Lowercase words, replace runs of non-alphanumeric
+  characters with one hyphen, and remove leading or trailing hyphens. Do not change verify.py.
+expected:
+  argv: ["{python}", verify.py]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.py]

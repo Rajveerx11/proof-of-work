@@ -1,0 +1,15 @@
+version: 1
+id: python-multifile-003
+fixture: python-multifile-003
+category: multi-file
+difficulty: medium
+corpus_version: 0.2.0
+instruction: |
+  Add percentage discounts across pricing.py and invoice.py. apply_discount must validate
+  percent from 0 through 100, and invoice_total must apply it to the summed prices.
+  Do not change verify.py.
+expected:
+  argv: ["{python}", verify.py]
+  timeout_seconds: 60
+gate:
+  protected_paths: [verify.py]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -78,13 +79,33 @@ def _cmd_verify_log(args: argparse.Namespace) -> int:
 
 
 def _cmd_eval_run(args: argparse.Namespace) -> int:
-    from ..eval import HistoryError, TaskValidationError, load_task, record_run, run_task
+    from ..eval import (
+        AdapterValidationError,
+        HistoryError,
+        TaskValidationError,
+        build_agent_invocation,
+        load_task,
+        record_run,
+        run_task,
+    )
 
     try:
-        agent_argv = json.loads(args.agent_argv_json)
+        invocation = build_agent_invocation(
+            args.agent,
+            generic_argv_json=args.agent_argv_json,
+            executable=args.agent_executable,
+            model=args.model,
+            agent_label=args.agent_label,
+        )
         task = load_task(args.task)
-        result = run_task(task, agent_argv, agent_timeout_seconds=args.agent_timeout)
-    except (TaskValidationError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        result = run_task(
+            task,
+            invocation.argv,
+            agent_timeout_seconds=args.agent_timeout,
+            agent_label=invocation.agent_label,
+            model_label=invocation.model_label,
+        )
+    except (AdapterValidationError, TaskValidationError, TypeError, ValueError) as exc:
         print(f"eval configuration error: {exc}")
         return 2
 
@@ -143,7 +164,7 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_eval_report(args: argparse.Namespace) -> int:
-    from ..eval import HistoryError, build_report
+    from ..eval import HistoryError, build_report, render_html
 
     try:
         report = build_report(
@@ -156,8 +177,28 @@ def _cmd_eval_report(args: argparse.Namespace) -> int:
         print(f"eval history error: {exc}")
         return 2
 
+    output_format = args.format or ("json" if args.json else "text")
+    if args.json and output_format != "json":
+        print("eval history error: --json cannot be combined with a non-JSON --format")
+        return 2
+    if args.output and output_format != "html":
+        print("eval history error: --output is currently supported only for HTML reports")
+        return 2
+    if output_format == "html":
+        document = render_html(report)
+        if args.output:
+            try:
+                Path(args.output).write_text(document, encoding="utf-8", newline="\n")
+            except OSError as exc:
+                print(f"eval history error: cannot write HTML report: {exc}")
+                return 2
+            print(f"HTML report written to {args.output}")
+        else:
+            print(document, end="")
+        return 0
+
     data = {"database": args.db, **report.as_dict()}
-    if args.json:
+    if output_format == "json":
         print(json.dumps(data, indent=2))
         return 0
 
@@ -289,14 +330,22 @@ def _build_parser() -> argparse.ArgumentParser:
     e_sub = e.add_subparsers(dest="eval_cmd", required=True)
     er = e_sub.add_parser("run", help="run one YAML task in a disposable workspace")
     er.add_argument("task", help="path to a version-1 task YAML file")
+    er.add_argument("--agent", choices=("codex", "claude", "generic"), default="generic")
     er.add_argument(
         "--agent-argv-json",
-        required=True,
+        default=None,
         help=(
             'trusted command JSON argv; include "{workspace}" and optionally "{usage}" '
             "for wrapper-emitted token/cost JSON"
         ),
     )
+    er.add_argument(
+        "--agent-executable",
+        default=None,
+        help="trusted Codex or Claude executable override (useful for managed installs)",
+    )
+    er.add_argument("--agent-label", default=None, help="display label stored with the run")
+    er.add_argument("--model", default=None, help="model passed to supported CLIs and stored")
     er.add_argument("--agent-timeout", type=int, default=600)
     er.add_argument("--db", default=DEFAULT_HISTORY_DB, help="SQLite eval history path")
     er.add_argument("--no-record", action="store_true", help="do not persist this run")
@@ -310,6 +359,8 @@ def _build_parser() -> argparse.ArgumentParser:
     ep.add_argument("--limit", type=_report_bound, default=20,
                     help="maximum recent runs to list (default: 20)")
     ep.add_argument("--json", action="store_true")
+    ep.add_argument("--format", choices=("text", "json", "html"), default=None)
+    ep.add_argument("--output", default=None, help="write a static HTML report to this path")
     ep.set_defaults(func=_cmd_eval_report)
 
     return p
