@@ -1,6 +1,6 @@
 [project]
 name = "proof-of-work-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Catch AI coding agents cheating on their work — verdict on facts, not opinions."
 readme = "README.md"
 requires-python = ">=3.11"
