@@ -75,7 +75,7 @@ jobs:
       - name: Create GitHub Release with artifacts
         run: >-
           gh release create "${{ github.ref_name }}" --generate-notes
-          dist/* reports/v0.2.0/README.md
-          reports/v0.2.0/index.html reports/v0.2.0/results.json
+          dist/* "reports/${GITHUB_REF_NAME}/README.md"
+          "reports/${GITHUB_REF_NAME}/index.html" "reports/${GITHUB_REF_NAME}/results.json"
         env:
           GH_TOKEN: ${{ github.token }}
