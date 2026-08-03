@@ -6,7 +6,7 @@ from html import escape
 from .history import RunRecord, RunSummary, TrendReport
 
 
-def render_html(report: TrendReport) -> str:
+def render_html(report: TrendReport, *, include_comparison: bool = True) -> str:
     """Render escaped run summaries only; process output is not part of TrendReport."""
     runs = sorted(
         report.runs,
@@ -25,7 +25,11 @@ def render_html(report: TrendReport) -> str:
     if not result_rows:
         result_rows = '<tr><td colspan="12" class="empty">No runs recorded.</td></tr>'
 
-    comparison = _comparison(report)
+    comparison = (
+        f"<h2>Comparison against previous runs</h2>{_comparison(report)}"
+        if include_comparison
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -80,7 +84,6 @@ def render_html(report: TrendReport) -> str:
     </table>
   </div>
   <p class="note">Unknown usage remains unknown; it is never counted as zero. Costs include only runs reporting exact USD micros.</p>
-  <h2>Comparison against previous runs</h2>
   {comparison}
 </main>
 </body>

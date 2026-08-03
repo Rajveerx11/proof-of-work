@@ -97,7 +97,7 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
 - **GitHub Action:** the composite action at `proofofwork/interfaces/`:
 
   ```yaml
-  - uses: Rajveerx11/proof-of-work/proofofwork/interfaces@main   # pin to a tag once released
+  - uses: Rajveerx11/proof-of-work/proofofwork/interfaces@v0.2.0
     with:
       mutation: "false"   # optional: also run mutation testing (slower)
   ```
@@ -137,6 +137,11 @@ gate:
 proof-of-work eval run tasks/python-fix-001.yaml \
   --agent codex --model '<model-id>' --json
 
+# Some Windows Codex installations cannot write through workspace-write sandboxing.
+# This explicit escape hatch is dangerous; use it only for reviewed fixtures in isolation.
+proof-of-work eval run tasks/python-fix-001.yaml \
+  --agent codex --model '<model-id>' --trusted-unrestricted --json
+
 # Claude Code CLI (must already be installed and authenticated)
 proof-of-work eval run tasks/python-fix-001.yaml \
   --agent claude --model '<model-id>' --json
@@ -156,6 +161,9 @@ proof-of-work eval report --task-id python-fix-001
 
 # write a portable, dependency-free comparison report
 proof-of-work eval report --format html --output report.html
+
+# write the same run facts as machine-readable JSON
+proof-of-work eval report --format json --output results.json
 ```
 
 The repository ships a versioned corpus of 20 small Python, JavaScript, and TypeScript tasks.
@@ -235,6 +243,9 @@ comparisons.
 
 **Security boundary:** this is a trusted-local benchmark runner, not a sandbox. Reviewed
 fixtures and local agent commands may still access the host, network, or spawn child processes.
+Built-in adapters request clean/safe CLI modes by default. `--trusted-unrestricted` explicitly
+disables the selected agent CLI's permission and sandbox checks, and marks the stored agent
+label accordingly; it is never enabled implicitly.
 Use a container or microVM before evaluating untrusted inputs. Gate scoring checks the recorded
 agent diff for supported tampering patterns; it does not make host execution safe or prove that
 the task specification is complete. A deliberate same-user escape (for example, a POSIX child
@@ -291,7 +302,7 @@ See [`plan/`](plan/) for the full spec and design history.
 git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
 uv sync --extra dev      # .venv + project + pytest
-uv run pytest -q         # the suite (CI: Linux + Windows x Python 3.11–3.13)
+uv run pytest -q         # the suite (CI: Linux + Windows x Python 3.11–3.14)
 uv run ruff check .      # lint (locked dev dependency)
 ```
 

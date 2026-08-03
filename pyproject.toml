@@ -3,6 +3,7 @@ name = "proof-of-work-agent"
 version = "0.2.0"
 description = "Catch AI coding agents cheating on their work — verdict on facts, not opinions."
 readme = "README.md"
+authors = [{ name = "Rajveer Vadnal" }]
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -10,6 +11,10 @@ keywords = ["ai-agents", "testing", "ci", "code-review", "cheat-detection", "att
 classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Intended Audience :: Developers",
   "Topic :: Software Development :: Testing",
   "Topic :: Software Development :: Quality Assurance",
@@ -20,6 +25,12 @@ dependencies = [
 ]
 # ponytail: no tree-sitter dep — every detector check is regex/stdlib-ast based. Add a
 # grammar dep only when a check actually needs a parse tree (deeper JS/TS semantics, v2).
+
+[project.urls]
+Homepage = "https://github.com/Rajveerx11/proof-of-work"
+Documentation = "https://github.com/Rajveerx11/proof-of-work#readme"
+Repository = "https://github.com/Rajveerx11/proof-of-work"
+Issues = "https://github.com/Rajveerx11/proof-of-work/issues"
 
 [project.optional-dependencies]
 judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-key

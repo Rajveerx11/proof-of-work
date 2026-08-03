@@ -31,6 +31,7 @@ def build_agent_invocation(
     executable: str | None = None,
     model: str | None = None,
     agent_label: str | None = None,
+    trusted_unrestricted: bool = False,
 ) -> AgentInvocation:
     """Build one reviewed argv list without invoking or requiring an installed CLI."""
     if adapter not in ADAPTERS:
@@ -39,6 +40,10 @@ def build_agent_invocation(
     parsed_agent_label = _optional_label(agent_label, "agent_label") or adapter
 
     if adapter == "generic":
+        if trusted_unrestricted:
+            raise AdapterValidationError(
+                "--trusted-unrestricted is only valid with codex or claude"
+            )
         if executable is not None:
             raise AdapterValidationError("generic adapter does not accept --agent-executable")
         if generic_argv_json is None:
@@ -55,20 +60,40 @@ def build_agent_invocation(
         raise AdapterValidationError(
             "--agent-argv-json is only valid with the generic adapter"
         )
+    if trusted_unrestricted:
+        parsed_agent_label = _label(
+            f"{parsed_agent_label} [trusted-unrestricted]",
+            "agent_label",
+        )
     command = _executable(executable, adapter)
     if adapter == "codex":
         argv = [
             command,
             "exec",
             "--ephemeral",
-            "--sandbox",
-            "workspace-write",
-            "--skip-git-repo-check",
-            "--color",
-            "never",
-            "--cd",
-            "{workspace}",
+            "--ignore-user-config",
+            "--ignore-rules",
         ]
+        if trusted_unrestricted:
+            argv.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            argv.extend(
+                (
+                    "--config",
+                    'approval_policy="never"',
+                    "--sandbox",
+                    "workspace-write",
+                )
+            )
+        argv.extend(
+            (
+                "--skip-git-repo-check",
+                "--color",
+                "never",
+                "--cd",
+                "{workspace}",
+            )
+        )
         if parsed_model is not None:
             argv.extend(("--model", parsed_model))
         argv.append(_AGENT_PROMPT)
@@ -76,12 +101,15 @@ def build_agent_invocation(
         argv = [
             command,
             "--print",
-            "--permission-mode",
-            "acceptEdits",
+            "--safe-mode",
             "--no-session-persistence",
             "--add-dir",
             "{workspace}",
         ]
+        if trusted_unrestricted:
+            argv.append("--dangerously-skip-permissions")
+        else:
+            argv.extend(("--permission-mode", "acceptEdits"))
         if parsed_model is not None:
             argv.extend(("--model", parsed_model))
         argv.append(_AGENT_PROMPT)

@@ -21,6 +21,7 @@ htmlcov/
 .tox/
 
 # Local Proof-of-Work state (runtime logs / db — not source)
+.proofofwork/
 *.db
 *.sqlite
 *.sqlite3
