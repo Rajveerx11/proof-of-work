@@ -18,6 +18,11 @@ jobs:
       - run: uv sync --extra dev
       - name: Verify tag matches package version
         run: test "${GITHUB_REF_NAME}" = "v$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+      - name: Verify matching release evidence
+        run: |
+          test -f "reports/${GITHUB_REF_NAME}/README.md"
+          test -f "reports/${GITHUB_REF_NAME}/index.html"
+          test -f "reports/${GITHUB_REF_NAME}/results.json"
       - run: uv run pytest -q
       - run: uv run ruff check .
 

@@ -24,3 +24,9 @@ def test_release_attaches_evidence_matching_the_release_tag():
     assert '"reports/${GITHUB_REF_NAME}/README.md"' in workflow
     assert '"reports/${GITHUB_REF_NAME}/index.html"' in workflow
     assert '"reports/${GITHUB_REF_NAME}/results.json"' in workflow
+    validation = workflow.index("Verify matching release evidence")
+    publication = workflow.index("Publish to PyPI")
+    assert validation < publication
+    assert 'test -f "reports/${GITHUB_REF_NAME}/README.md"' in workflow
+    assert 'test -f "reports/${GITHUB_REF_NAME}/index.html"' in workflow
+    assert 'test -f "reports/${GITHUB_REF_NAME}/results.json"' in workflow
