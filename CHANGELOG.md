@@ -17,6 +17,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Linux and Windows adapter, corpus, migration, and HTML security regression tests across
   Python 3.11 through 3.14.
 - CI-generated empty-history HTML artifact; no external-agent scores are invented.
+- Published a complete, comparison-free v0.2.0 Codex corpus run with HTML, JSON, hashes,
+  environment disclosure, and a CI regression check over all 20 task records.
 - Explicit `--trusted-unrestricted` opt-in for reviewed fixtures when a built-in CLI sandbox
   is incompatible with the host; safe permission controls remain the default.
 

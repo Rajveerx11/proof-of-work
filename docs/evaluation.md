@@ -141,6 +141,9 @@ CI publishes a genuine empty-history HTML artifact named
 usage, costs, or agent comparisons. GitHub Pages is intentionally not configured because
 the repository has no Pages site configuration.
 
+The repository also contains a reviewed [v0.2.0 evidence snapshot](../reports/v0.2.0/README.md)
+with its exact environment, execution mode, limitations, HTML, JSON, and artifact hashes.
+
 ## Methodology and limitations
 
 - Results are meaningful only for the reviewed task, verifier, corpus version, agent
