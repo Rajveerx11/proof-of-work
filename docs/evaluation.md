@@ -33,7 +33,24 @@ uv run proof-of-work eval run tasks/python-fix-001.yaml \
 ```
 
 Codex CLI and Claude Code must already be installed and authenticated. Unit tests do
-not require either executable.
+not require either executable. Built-in adapters request the CLIs' clean or safe modes
+to reduce influence from personal configuration while retaining authentication. Always
+record the CLI version, model, operating system, and execution mode with published results.
+
+The safe default retains the agent CLI's permission controls. If a reviewed local fixture
+cannot run because the CLI sandbox is incompatible with the host, an operator may opt in:
+
+```bash
+uv run proof-of-work eval run tasks/python-fix-001.yaml \
+  --agent codex --model '<model-id>' \
+  --agent-label 'Codex CLI <version> (trusted-unrestricted)' \
+  --trusted-unrestricted --json
+```
+
+`--trusted-unrestricted` maps to the selected built-in CLI's dangerous permission bypass.
+It is rejected by the generic adapter, is never enabled implicitly, and automatically adds
+`[trusted-unrestricted]` to the recorded agent label. Use it only for reviewed fixtures
+inside an isolated machine, container, or microVM.
 
 ## Corpus contract
 
@@ -101,6 +118,8 @@ Text and JSON history reports remain available:
 ```bash
 uv run proof-of-work eval report
 uv run proof-of-work eval report --json
+uv run proof-of-work eval report --format json --output results.json
+uv run proof-of-work eval report --format json --no-comparison --output corpus.json
 ```
 
 Generate static HTML:
@@ -108,6 +127,9 @@ Generate static HTML:
 ```bash
 uv run proof-of-work eval report --format html --output report.html
 ```
+
+Use `--no-comparison` for a one-shot corpus whose rows are different tasks rather than
+repeated measurements of the same task population. Totals and per-task facts remain included.
 
 The HTML report includes agent and model labels, corpus version, task/category results,
 pass rate, failure reasons, true wall time, input/output tokens, exact reported cost,
@@ -118,6 +140,9 @@ CI publishes a genuine empty-history HTML artifact named
 `proof-of-work-eval-report`. It demonstrates report rendering without inventing scores,
 usage, costs, or agent comparisons. GitHub Pages is intentionally not configured because
 the repository has no Pages site configuration.
+
+The repository also contains a reviewed [v0.2.0 evidence snapshot](../reports/v0.2.0/README.md)
+with its exact environment, execution mode, limitations, HTML, JSON, and artifact hashes.
 
 ## Methodology and limitations
 
@@ -134,6 +159,7 @@ the repository has no Pages site configuration.
 
 This is a trusted-local runner, not a sandbox. Reviewed fixtures and agent commands may
 access the host, network, credentials available to their own CLI, or other processes.
+`--trusted-unrestricted` also disables the built-in agent CLI's own permission boundary.
 Process groups, Windows Job Objects, timeouts, bounded output, and disposable workspaces
 reduce accidents and races; they do not isolate hostile code. Use a container or microVM
 for untrusted fixtures or commands. See [SECURITY.md](../SECURITY.md).

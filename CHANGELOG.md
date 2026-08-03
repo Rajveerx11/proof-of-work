@@ -2,7 +2,7 @@
 
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.2.0] - 2026-08-02
+## [0.2.0] - 2026-08-03
 
 ### Added
 
@@ -12,16 +12,26 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   adapter.
 - Escaped, deterministic static HTML evaluation reports with exact reported cost, usage coverage,
   failure reasons, task/category detail, and equal-window comparisons.
-- Linux and Windows adapter, corpus, migration, and HTML security regression tests.
+- Direct JSON report-file output for reproducible, machine-readable evidence artifacts.
+- Optional comparison omission for one-shot corpora whose ordered task halves are not a trend.
+- Linux and Windows adapter, corpus, migration, and HTML security regression tests across
+  Python 3.11 through 3.14.
 - CI-generated empty-history HTML artifact; no external-agent scores are invented.
+- Published a complete, comparison-free v0.2.0 Codex corpus run with HTML, JSON, hashes,
+  environment disclosure, and a CI regression check over all 20 task records.
+- Explicit `--trusted-unrestricted` opt-in for reviewed fixtures when a built-in CLI sandbox
+  is incompatible with the host; safe permission controls remain the default.
 
 ### Security
 
 - Documented the evaluation runner as trusted-local process containment, not a sandbox.
 - Kept `shell=False`, bounded output, timeouts, minimal child environment, immutable verifier
   protection, and non-persistence of agent output and workspace contents.
+- Requested clean/safe built-in CLI modes to reduce benchmark contamination from local setup.
+- Made the composite GitHub Action install its own pinned source instead of a mismatched PyPI name.
 
 ### Compatibility
 
 - Legacy SQLite histories migrate additively; unknown usage remains `NULL`, and cost remains
   integer USD micros.
+- Declared Python 3.11 through 3.14 support and complete PyPI project links.

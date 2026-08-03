@@ -96,6 +96,7 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
             executable=args.agent_executable,
             model=args.model,
             agent_label=args.agent_label,
+            trusted_unrestricted=args.trusted_unrestricted,
         )
         task = load_task(args.task)
         result = run_task(
@@ -181,11 +182,11 @@ def _cmd_eval_report(args: argparse.Namespace) -> int:
     if args.json and output_format != "json":
         print("eval history error: --json cannot be combined with a non-JSON --format")
         return 2
-    if args.output and output_format != "html":
-        print("eval history error: --output is currently supported only for HTML reports")
+    if args.output and output_format == "text":
+        print("eval history error: --output requires JSON or HTML format")
         return 2
     if output_format == "html":
-        document = render_html(report)
+        document = render_html(report, include_comparison=not args.no_comparison)
         if args.output:
             try:
                 Path(args.output).write_text(document, encoding="utf-8", newline="\n")
@@ -198,8 +199,20 @@ def _cmd_eval_report(args: argparse.Namespace) -> int:
         return 0
 
     data = {"database": args.db, **report.as_dict()}
+    if args.no_comparison:
+        data["comparison_included"] = False
+        data["trend"] = None
     if output_format == "json":
-        print(json.dumps(data, indent=2))
+        document = json.dumps(data, indent=2) + "\n"
+        if args.output:
+            try:
+                Path(args.output).write_text(document, encoding="utf-8", newline="\n")
+            except OSError as exc:
+                print(f"eval history error: cannot write JSON report: {exc}")
+                return 2
+            print(f"JSON report written to {args.output}")
+        else:
+            print(document, end="")
         return 0
 
     totals = report.totals
@@ -228,7 +241,9 @@ def _cmd_eval_report(args: argparse.Namespace) -> int:
     else:
         print(f"  usage: not reported (0/{totals.runs} runs)")
     trend = report.trend
-    if trend.window_size == 0:
+    if args.no_comparison:
+        print("  trend: omitted")
+    elif trend.window_size == 0:
         print("  trend: need at least 2 runs")
     else:
         print(f"  trend: latest {trend.window_size} vs previous {trend.window_size}")
@@ -346,6 +361,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     er.add_argument("--agent-label", default=None, help="display label stored with the run")
     er.add_argument("--model", default=None, help="model passed to supported CLIs and stored")
+    er.add_argument(
+        "--trusted-unrestricted",
+        action="store_true",
+        help=(
+            "DANGER: disable built-in agent permission and sandbox checks; "
+            "use only for reviewed fixtures in an isolated environment"
+        ),
+    )
     er.add_argument("--agent-timeout", type=int, default=600)
     er.add_argument("--db", default=DEFAULT_HISTORY_DB, help="SQLite eval history path")
     er.add_argument("--no-record", action="store_true", help="do not persist this run")
@@ -360,7 +383,12 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="maximum recent runs to list (default: 20)")
     ep.add_argument("--json", action="store_true")
     ep.add_argument("--format", choices=("text", "json", "html"), default=None)
-    ep.add_argument("--output", default=None, help="write a static HTML report to this path")
+    ep.add_argument("--output", default=None, help="write a JSON or static HTML report")
+    ep.add_argument(
+        "--no-comparison",
+        action="store_true",
+        help="omit equal-window comparison when report rows are not comparable over time",
+    )
     ep.set_defaults(func=_cmd_eval_report)
 
     return p

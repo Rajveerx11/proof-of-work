@@ -175,6 +175,73 @@ def test_eval_report_json(tmp_path, capsys):
     assert data["runs"][0]["task_id"] == "task-1"
 
 
+def test_eval_report_json_writes_file(tmp_path, capsys):
+    from proofofwork.eval import record_run
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    db = tmp_path / "history.db"
+    output = tmp_path / "report.json"
+    process = ProcessResult(0, 0.1, False, "", "")
+    record_run(EvalResult("task-1", process, process, True, gate=_verdict(True)), db)
+
+    assert cli.main([
+        "eval",
+        "report",
+        "--db",
+        str(db),
+        "--format",
+        "json",
+        "--output",
+        str(output),
+    ]) == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["totals"]["runs"] == 1
+    assert f"JSON report written to {output}" in capsys.readouterr().out
+
+
+def test_eval_report_can_omit_noncomparable_trend(tmp_path, capsys):
+    from proofofwork.eval import record_run
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    db = tmp_path / "history.db"
+    process = ProcessResult(0, 0.1, False, "", "")
+    record_run(EvalResult("task-1", process, process, True, gate=_verdict(True)), db)
+    record_run(EvalResult("task-2", process, process, True, gate=_verdict(True)), db)
+
+    assert cli.main([
+        "eval",
+        "report",
+        "--db",
+        str(db),
+        "--format",
+        "json",
+        "--no-comparison",
+    ]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["comparison_included"] is False
+    assert data["trend"] is None
+
+
+def test_eval_report_html_can_omit_noncomparable_trend(tmp_path, capsys):
+    from proofofwork.eval import record_run
+    from proofofwork.eval.harness import EvalResult, ProcessResult
+
+    db = tmp_path / "history.db"
+    process = ProcessResult(0, 0.1, False, "", "")
+    record_run(EvalResult("task-1", process, process, True, gate=_verdict(True)), db)
+    record_run(EvalResult("task-2", process, process, True, gate=_verdict(True)), db)
+
+    assert cli.main([
+        "eval",
+        "report",
+        "--db",
+        str(db),
+        "--format",
+        "html",
+        "--no-comparison",
+    ]) == 0
+    assert "Comparison against previous runs" not in capsys.readouterr().out
+
+
 def test_eval_report_html_writes_static_file(tmp_path, capsys):
     from proofofwork.eval import record_run
     from proofofwork.eval.harness import EvalResult, ProcessResult

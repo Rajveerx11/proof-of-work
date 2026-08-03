@@ -45,6 +45,10 @@ def test_codex_adapter_generates_reviewed_argv_without_running_codex(monkeypatch
         "/tools/codex",
         "exec",
         "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--config",
+        'approval_policy="never"',
         "--sandbox",
         "workspace-write",
         "--skip-git-repo-check",
@@ -62,6 +66,20 @@ def test_codex_adapter_generates_reviewed_argv_without_running_codex(monkeypatch
     assert "--dangerously-bypass-approvals-and-sandbox" not in invocation.argv
 
 
+def test_codex_adapter_requires_explicit_opt_in_for_unrestricted_mode(monkeypatch):
+    monkeypatch.setattr(
+        "proofofwork.eval.adapters.shutil.which",
+        lambda name: "/tools/codex" if name == "codex" else None,
+    )
+
+    invocation = build_agent_invocation("codex", trusted_unrestricted=True)
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in invocation.argv
+    assert "--sandbox" not in invocation.argv
+    assert "workspace-write" not in invocation.argv
+    assert invocation.agent_label == "codex [trusted-unrestricted]"
+
+
 def test_claude_adapter_generates_reviewed_argv_without_running_claude(monkeypatch):
     monkeypatch.setattr(
         "proofofwork.eval.adapters.shutil.which",
@@ -70,18 +88,40 @@ def test_claude_adapter_generates_reviewed_argv_without_running_claude(monkeypat
 
     invocation = build_agent_invocation("claude", model="claude-test")
 
-    assert invocation.argv[:8] == (
+    assert invocation.argv[:6] == (
         "/tools/claude",
         "--print",
-        "--permission-mode",
-        "acceptEdits",
+        "--safe-mode",
         "--no-session-persistence",
         "--add-dir",
         "{workspace}",
-        "--model",
     )
-    assert invocation.argv[8] == "claude-test"
+    assert invocation.argv[6:] == ("--permission-mode", "acceptEdits", "--model", "claude-test", (
+        "Read TASK.md, make the requested changes inside the current workspace, "
+        "run relevant checks, and stop when the task is complete."
+    ))
     assert "--dangerously-skip-permissions" not in invocation.argv
+
+
+def test_claude_adapter_requires_explicit_opt_in_for_unrestricted_mode():
+    invocation = build_agent_invocation(
+        "claude",
+        executable="/tools/claude",
+        trusted_unrestricted=True,
+    )
+
+    assert "--dangerously-skip-permissions" in invocation.argv
+    assert "--permission-mode" not in invocation.argv
+    assert invocation.agent_label == "claude [trusted-unrestricted]"
+
+
+def test_generic_adapter_rejects_unrestricted_mode():
+    with pytest.raises(AdapterValidationError, match="only valid with codex or claude"):
+        build_agent_invocation(
+            "generic",
+            generic_argv_json='["agent", "{workspace}"]',
+            trusted_unrestricted=True,
+        )
 
 
 def test_generic_adapter_preserves_trusted_argv_list():
