@@ -172,11 +172,16 @@ weakened assertions, fake-pass exits, and mocked-away production logic. Every ta
 category, difficulty, corpus version, and protected verifier. Fixtures are offline and contain
 no package installation step.
 
-**Published v0.2.0 evidence:** Codex CLI 0.146.0 with model label `gpt-5.6-sol` completed
-20/20 single-attempt tasks with no anti-tamper findings. Usage was not reported and remains
-unknown. See the [methodology](reports/v0.2.0/README.md), [HTML report](reports/v0.2.0/index.html),
-and [machine-readable JSON](reports/v0.2.0/results.json). This is one environment-specific corpus
-run, not a general agent ranking.
+**Published multi-agent evidence (2026-08-11):** with the same 20-task v0.2.0 corpus,
+filename order, and 240-second cap, Codex CLI completed 20/20 tasks, GitHub Copilot CLI
+completed 20/20, and OpenCode CLI completed 17/20. OpenCode's three failures exited
+normally and passed the anti-tampering gate, but failed the protected outcome verifier.
+Usage was not reported by any configuration and remains unknown. See the
+[methodology](reports/2026-08-11-multi-agent/README.md),
+[HTML report](reports/2026-08-11-multi-agent/index.html), and
+[machine-readable JSON](reports/2026-08-11-multi-agent/results.json). The original
+[Codex-only v0.2.0 snapshot](reports/v0.2.0/README.md) remains available. These are
+environment-specific corpus results, not a general agent ranking.
 
 ![Static report empty-state example](docs/report-example.png)
 
