@@ -141,8 +141,11 @@ CI publishes a genuine empty-history HTML artifact named
 usage, costs, or agent comparisons. GitHub Pages is intentionally not configured because
 the repository has no Pages site configuration.
 
-The repository also contains a reviewed [v0.2.0 evidence snapshot](../reports/v0.2.0/README.md)
-with its exact environment, execution mode, limitations, HTML, JSON, and artifact hashes.
+The repository contains a reviewed
+[multi-agent evidence snapshot](../reports/2026-08-11-multi-agent/README.md) comparing
+Codex CLI, GitHub Copilot CLI, and OpenCode CLI on the complete corpus. Its methodology,
+agent settings, failures, limitations, HTML, JSON, and artifact hashes are published.
+The original [Codex-only v0.2.0 snapshot](../reports/v0.2.0/README.md) remains available.
 
 ## Methodology and limitations
 
