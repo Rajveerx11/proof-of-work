@@ -104,14 +104,12 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     finally:
                         try:
                             _git(root, "worktree", "remove", "--force", snapshot)
-                        except RuntimeError as remove_error:
+                        except RuntimeError:
                             shutil.rmtree(snapshot, ignore_errors=True)
                             try:
                                 _git(root, "worktree", "prune", "--expire", "now")
-                            except RuntimeError as prune_error:
-                                raise RuntimeError(
-                                    f"{remove_error}; worktree prune failed: {prune_error}"
-                                ) from remove_error
+                            except RuntimeError:
+                                pass  # preserve the original cleanup failure
                             raise
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
