@@ -105,6 +105,32 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
 Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
 `--json`, `--judge`, `--db <path>`.
 
+Coverage bootstrap is explicit and one-time: after installing test dependencies, run
+`proof-of-work check --update-baseline` for ordinary checks, or
+`proof-of-work check --staged --update-baseline` for the pre-commit hook. The latter
+writes the measured baseline to Git's local metadata (`git rev-parse --git-path
+proofofwork/baseline.json`), not the ignored working tree or index. It persists across
+commits in that local repository but is **not shared by clones or CI**. To share a
+trusted baseline, copy the local metadata baseline into the ignored worktree path,
+then force-add and review it before committing:
+
+```bash
+mkdir -p .proofofwork
+cp "$(git rev-parse --git-path proofofwork/baseline.json)" .proofofwork/baseline.json
+git add -f .proofofwork/baseline.json
+```
+
+Staged checks prioritize the committed HEAD value over local metadata (so the new
+baseline is trusted only after the reviewed commit).
+Bootstrap fails if any baseline already exists, if coverage is unavailable, or if
+another gate check fails; it never updates a baseline to accept a drop. A fresh
+clone using the hook must bootstrap its own local baseline or receive the reviewed
+committed baseline. Staged tests run in a temporary Git worktree over the index
+content, with ignored `node_modules` copied from the working tree for JS/TS. Install
+these dependencies first; missing/non-ignored dependencies, links out of
+`node_modules`, and staged symlinks fail closed. This is local execution of
+trusted code, not a security sandbox; ignored installed dependencies must be trusted.
+
 The judge (`--judge`) is advisory only: its output is logged as metadata and never changes
 the verdict. Set `ANTHROPIC_API_KEY` and install the extra
 (`pip install "proof-of-work-agent[judge]"`); without either, it is skipped.

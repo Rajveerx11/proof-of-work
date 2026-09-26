@@ -6,8 +6,11 @@ Flow: parse diff -> deterministic detector checks -> re-run real tests -> covera
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shutil
 import tempfile
+from pathlib import Path
 
 from .types import Finding, MutationResult, Severity, TestResult, Verdict
 
@@ -65,8 +68,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     try:
         from .core.detector import learned
         findings.extend(learned.check(diff, root))
-    except Exception as e:  # noqa: BLE001 - learned rules must not break the gate
-        findings.append(Finding(rule="check-error:learned", severity=Severity.INFO,
+    except Exception as e:  # noqa: BLE001 - broken learned checks must fail closed
+        findings.append(Finding(rule="check-error:learned", severity=Severity.BLOCK,
                                 message=str(e)))
 
     tests = TestResult()
@@ -76,6 +79,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                                 "--update-baseline requires a successful test run"))
     if run_tests:
         from .core.detector.coverage_delta import (
+            baseline_exists,
+            baseline_path,
             coverage_findings,
             read_baseline,
             write_baseline,
@@ -85,21 +90,28 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
 
         try:
             if staged:
-                with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as snapshot:
-                    _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
-                    tests = _run(get_sandbox("local"), snapshot, diff.languages())
+                with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as directory:
+                    snapshot = os.path.join(directory, "tree")
+                    _git(root, "worktree", "add", "--detach", "--no-checkout", snapshot, "HEAD")
+                    try:
+                        _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
+                        _prepare_staged_dependencies(root, snapshot, diff.languages())
+                        tests = _run(get_sandbox("local"), snapshot, diff.languages())
+                    finally:
+                        _git(root, "worktree", "remove", "--force", snapshot)
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
             coverage_baseline = read_baseline(root, staged=staged)
+            # Suppress only the missing-baseline finding during explicit bootstrap;
+            # always evaluate a present trusted baseline before deciding to write.
+            if coverage_baseline is not None or not update_baseline:
+                findings.extend(coverage_findings(tests, coverage_baseline,
+                                                  threshold=coverage_drop_threshold))
             if update_baseline:
-                if staged:
-                    raise ValueError("--update-baseline is not supported with --staged")
+                if baseline_exists(root, staged=staged):
+                    raise ValueError("coverage baseline already exists; --update-baseline is bootstrap-only")
                 if not (tests.ran and tests.passed is True and tests.coverage is not None):
                     raise ValueError("--update-baseline requires passing tests with coverage")
-                write_baseline(root, tests.coverage)
-                coverage_baseline = tests.coverage
-            findings.extend(coverage_findings(tests, coverage_baseline,
-                                              threshold=coverage_drop_threshold))
         except Exception as exc:  # noqa: BLE001 - execution and baseline errors fail closed
             findings.append(Finding("test-execution-error", Severity.BLOCK, str(exc)))
 
@@ -117,6 +129,16 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         judge_meta = review(diff)  # advisory ONLY — logged as metadata, never signed
 
     passed, reasons = _decide(findings, tests, require_tests=run_tests)
+    bootstrapped = None
+    if passed and update_baseline:
+        try:
+            write_baseline(root, tests.coverage, staged=staged)
+            path = baseline_path(root, staged=staged)
+            bootstrapped = (path, os.stat(path).st_ino, tests.coverage)
+            coverage_baseline = tests.coverage
+        except Exception as exc:  # noqa: BLE001 - bootstrap failures must fail closed
+            findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK, str(exc)))
+            passed, reasons = _decide(findings, tests, require_tests=run_tests)
     verdict = Verdict(passed=passed, reasons=reasons, findings=findings, tests=tests,
                       mutation=mutation, coverage_baseline=coverage_baseline, judge=judge_meta)
 
@@ -125,11 +147,49 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         env = build_envelope(subject=_changeset_sha(diff), verdict=verdict)
         verdict.entry_hash = record(env, db_path)
     except Exception as e:  # noqa: BLE001 - never claim a signed pass without its log
+        if bootstrapped is not None:
+            # Do not keep a newly bootstrapped baseline after a failed gate log.
+            # Only remove our own unchanged file, never a concurrently replaced one.
+            path, inode, coverage = bootstrapped
+            try:
+                with open(path, encoding="utf-8") as f:
+                    unchanged = (os.fstat(f.fileno()).st_ino == inode
+                                 and json.load(f) == {"coverage": coverage})
+                if unchanged:
+                    os.unlink(path)
+            except (OSError, ValueError):
+                pass
         verdict.passed = False
         verdict.entry_hash = ""
         verdict.reasons.append(f"BLOCK log-unavailable: {e}")
 
     return verdict
+
+
+def _prepare_staged_dependencies(root: str, snapshot: str, languages: set[str]) -> None:
+    """Bring only ignored installed JS packages into the isolated index tree."""
+    from .core.gitdiff import _git
+
+    for parent, dirs, files in os.walk(snapshot, followlinks=False):
+        for name in (*dirs, *files):
+            if (Path(parent) / name).is_symlink():
+                raise ValueError("staged snapshot contains a symlink; cannot safely run tests")
+    if not languages.intersection({"js", "ts"}):
+        return
+    packages = Path(root) / "node_modules"
+    if not packages.is_dir() or packages.is_symlink():
+        raise ValueError("staged JS tests require installed, ignored node_modules")
+    try:
+        _git(root, "check-ignore", "--quiet", "--", "node_modules")
+    except RuntimeError as exc:
+        raise ValueError("staged JS tests require ignored node_modules") from exc
+    package_root = packages.resolve()
+    for parent, dirs, files in os.walk(packages, followlinks=False):
+        for name in (*dirs, *files):
+            path = Path(parent) / name
+            if path.is_symlink() and not path.resolve().is_relative_to(package_root):
+                raise ValueError(f"node_modules link escapes installed dependencies: {path}")
+    shutil.copytree(packages, Path(snapshot) / "node_modules")
 
 
 def _decide(findings: list[Finding], tests: TestResult, *,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 from proofofwork import engine
 from proofofwork.core import detector, runner
@@ -12,6 +13,19 @@ from proofofwork.types import Diff, Finding, Severity, TestResult
 def _git(root, *args):
     return subprocess.run(["git", *args], cwd=root, check=True,
                           capture_output=True, text=True).stdout
+
+
+def test_option_looking_base_ref_cannot_suppress_diff(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "start")
+    (tmp_path / "app.py").write_text("value = 2\n")
+    verdict = engine.check(str(tmp_path), "--quiet", run_tests=False)
+    assert not verdict.passed
+    assert verdict.findings[0].rule == "git-diff"
 
 
 def test_bad_ref_returns_failure_not_empty_pass(tmp_path):
@@ -75,6 +89,54 @@ def test_baseline_bootstrap_requires_passing_measured_tests(monkeypatch, tmp_pat
     assert json.loads(baseline.read_text())["coverage"] == 77
     assert engine.check(str(tmp_path)).passed
     assert not engine.check(str(tmp_path), run_tests=False, update_baseline=True).passed
+    assert not engine.check(str(tmp_path), update_baseline=True).passed
+    assert json.loads(baseline.read_text())["coverage"] == 77
+
+
+def test_bootstrap_does_not_write_on_other_block_or_existing_bad_baseline(monkeypatch, tmp_path):
+    monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
+                                                                     coverage=80))
+    baseline = tmp_path / ".proofofwork" / "baseline.json"
+    verdict = engine.check(str(tmp_path), update_baseline=True,
+                           extra_findings=[Finding("other", Severity.BLOCK, "bad")])
+    assert not verdict.passed and not baseline.exists()
+    baseline.parent.mkdir(exist_ok=True)
+    baseline.write_text('{"coverage": 90}')
+    verdict = engine.check(str(tmp_path), update_baseline=True)
+    assert not verdict.passed and baseline.read_text() == '{"coverage": 90}'
+    assert any(f.rule == "coverage-drop" for f in verdict.findings)
+    assert not engine.check(str(tmp_path)).passed  # measured coverage dropped
+    baseline.write_text("invalid")
+    verdict = engine.check(str(tmp_path), update_baseline=True)
+    assert not verdict.passed and baseline.read_text() == "invalid"
+
+
+def test_learned_exception_blocks(monkeypatch, tmp_path):
+    monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
+
+    def broken(*args):
+        raise RuntimeError("learned failed")
+
+    monkeypatch.setattr("proofofwork.core.detector.learned.check", broken)
+    verdict = engine.check(str(tmp_path), run_tests=False)
+    assert not verdict.passed
+    assert any(f.rule == "check-error:learned" and f.severity == Severity.BLOCK
+               for f in verdict.findings)
+
+
+def test_bootstrap_rolls_back_if_log_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
+                                                                     coverage=80))
+
+    def broken(*args):
+        raise OSError("log unavailable")
+
+    monkeypatch.setattr("proofofwork.log.record", broken)
+    verdict = engine.check(str(tmp_path), update_baseline=True)
+    assert not verdict.passed
+    assert not (tmp_path / ".proofofwork" / "baseline.json").exists()
 
 
 def test_staged_runs_index_not_worktree_and_does_not_mutate_either(tmp_path):
@@ -127,6 +189,60 @@ def test_staged_baseline_uses_committed_value_not_staged_edit(monkeypatch, tmp_p
     assert verdict.coverage_baseline == 0
     assert baseline.read_text() == '{"coverage": 100}'
     assert _git(tmp_path, "ls-files", "--stage") == before
+
+
+def test_staged_bootstrap_uses_git_metadata_only(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "start")
+    (tmp_path / "app.py").write_text("value = 2\n")
+    _git(tmp_path, "add", "-A")
+    index_before = _git(tmp_path, "ls-files", "--stage")
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
+                                                                     coverage=65))
+    verdict = engine.check(str(tmp_path), staged=True, update_baseline=True)
+    assert verdict.passed, verdict.reasons
+    assert not (tmp_path / ".proofofwork" / "baseline.json").exists()
+    assert json.loads((tmp_path / ".git" / "proofofwork" / "baseline.json").read_text()) == {"coverage": 65}
+    assert _git(tmp_path, "ls-files", "--stage") == index_before
+    assert engine.check(str(tmp_path), staged=True).passed
+    assert not engine.check(str(tmp_path), staged=True, update_baseline=True).passed
+
+
+def test_staged_js_receives_ignored_dependencies_and_git_context(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / ".gitignore").write_text("node_modules/\n")
+    (tmp_path / "app.js").write_text("const answer = 1;\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "start")
+    (tmp_path / "app.js").write_text("const answer = 2;\n")
+    _git(tmp_path, "add", "-A")
+    (tmp_path / "app.js").write_text("const answer = 3;\n")
+    deps = tmp_path / "node_modules" / "example"
+    deps.mkdir(parents=True)
+    (deps / "index.js").write_text("module.exports = true;\n")
+
+    def inspect(sandbox, snapshot, languages):
+        assert (tmp_path / "app.js").read_text() == "const answer = 3;\n"
+        assert (Path(snapshot) / "app.js").read_text() == "const answer = 2;\n"
+        assert (Path(snapshot) / "node_modules/example/index.js").is_file()
+        assert _git(snapshot, "rev-parse", "HEAD").strip() == _git(tmp_path, "rev-parse", "HEAD").strip()
+        assert "app.js" in _git(snapshot, "diff", "--name-only", "HEAD")
+        return TestResult(ran=True, passed=True)
+
+    monkeypatch.setattr(runner, "run_tests", inspect)
+    assert engine.check(str(tmp_path), staged=True).passed
+    (tmp_path / "node_modules" / "example" / "index.js").unlink()
+    (tmp_path / "node_modules" / "example").rmdir()
+    (tmp_path / "node_modules").rmdir()
+    verdict = engine.check(str(tmp_path), staged=True)
+    assert not verdict.passed
+    assert "installed, ignored node_modules" in " ".join(verdict.reasons)
 
 
 def test_extra_block_still_enforced_in_detector_only_mode(monkeypatch, tmp_path):

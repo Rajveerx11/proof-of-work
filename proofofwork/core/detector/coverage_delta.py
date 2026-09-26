@@ -14,24 +14,51 @@ from ...types import Finding, Severity, TestResult
 _BASELINE = os.path.join(".proofofwork", "baseline.json")
 
 
+def baseline_path(root: str, *, staged: bool = False) -> str:
+    if staged:
+        from ..gitdiff import _git
+        return os.path.abspath(os.path.join(root, _git(root, "rev-parse", "--git-path",
+                                                       "proofofwork/baseline.json").strip()))
+    return os.path.join(root, _BASELINE)
+
+
+def baseline_exists(root: str, *, staged: bool = False) -> bool:
+    if staged:
+        from ..gitdiff import _git
+        try:
+            _git(root, "cat-file", "-e", "HEAD:.proofofwork/baseline.json")
+            return True
+        except RuntimeError:
+            pass
+    return os.path.lexists(baseline_path(root, staged=staged))
+
+
 def read_baseline(root: str, *, staged: bool = False) -> float | None:
     try:
         if staged:
             from ..gitdiff import _git
-            content = _git(root, "show", "HEAD:.proofofwork/baseline.json")
+            try:
+                content = _git(root, "show", "HEAD:.proofofwork/baseline.json")
+            except RuntimeError:
+                with open(baseline_path(root, staged=True), encoding="utf-8") as f:
+                    content = f.read()
             value = float(json.loads(content)["coverage"])
         else:
-            with open(os.path.join(root, _BASELINE), encoding="utf-8") as f:
+            with open(baseline_path(root), encoding="utf-8") as f:
                 value = float(json.load(f)["coverage"])
         return value if math.isfinite(value) and 0 <= value <= 100 else None
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return None
 
 
-def write_baseline(root: str, coverage: float) -> None:
-    d = os.path.join(root, ".proofofwork")
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "baseline.json"), "w", encoding="utf-8") as f:
+def write_baseline(root: str, coverage: float, *, staged: bool = False) -> None:
+    path = baseline_path(root, staged=staged)
+    directory = os.path.dirname(path)
+    if os.path.islink(directory):
+        raise ValueError("coverage baseline directory must not be a symlink")
+    os.makedirs(directory, exist_ok=True)
+    # Exclusive creation: never replace even a malformed or concurrently created baseline.
+    with open(path, "x", encoding="utf-8") as f:
         json.dump({"coverage": coverage}, f)
 
 

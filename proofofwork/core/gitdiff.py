@@ -136,8 +136,12 @@ def parse_patch(text: str) -> Diff:
 
 
 def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> Diff:
+    # Resolve first: an option-looking ref (e.g. --quiet) must not change git diff's
+    # behavior or turn a real changeset into an empty passing diff.
+    commit = _git(root, "rev-parse", "--verify", "--end-of-options",
+                  f"{base_ref}^{{commit}}").strip()
     cached = ["--cached"] if staged else []
-    status_out = _git(root, "diff", "--name-status", "-z", *cached, base_ref)
+    status_out = _git(root, "diff", "--name-status", "-z", *cached, commit, "--")
     # Force raw textual diffing. A changeset-controlled .gitattributes file must not
     # suppress detector input with ``-diff`` or invoke a textconv/external driver.
     unified_out = _git(
@@ -149,7 +153,8 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
         "--no-ext-diff",
         "--no-textconv",
         *cached,
-        base_ref,
+        commit,
+        "--",
     )
 
     lines_by_path = _parse_unified(unified_out)

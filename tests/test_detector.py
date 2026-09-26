@@ -168,10 +168,10 @@ def test_collect_diff_roundtrip(tmp_path):
 
 
 def test_collect_diff_fails_closed_on_non_repo_and_bad_ref(tmp_path):
-    with pytest.raises(RuntimeError, match="git diff"):
+    with pytest.raises(RuntimeError, match="git rev-parse"):
         collect_diff(str(tmp_path), "HEAD")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    with pytest.raises(RuntimeError, match="git diff"):
+    with pytest.raises(RuntimeError, match="git rev-parse"):
         collect_diff(str(tmp_path), "not-a-real-ref")
 
 
