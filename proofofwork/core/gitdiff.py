@@ -41,19 +41,17 @@ def _is_test(path: str) -> bool:
 
 
 def _git(root: str, *args: str) -> str:
-    """Run git plumbing; return stdout, or '' on any failure (graceful degradation)."""
-    # ponytail: swallow-and-empty on error; a broken/absent repo yields an empty Diff
-    # rather than crashing the gate. Upgrade path: surface the stderr if callers need it.
+    """Run git plumbing; raise on errors so an incomplete diff cannot pass."""
     try:
         cp = subprocess.run(
             ["git", "-c", "core.quotepath=false", *args],
             cwd=root, capture_output=True, text=True, check=False,
             encoding="utf-8", errors="replace",
         )
-    except (OSError, ValueError):
-        return ""
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"git unavailable: {exc}") from exc
     if cp.returncode != 0:
-        return ""
+        raise RuntimeError(f"git {' '.join(args)} failed: {cp.stderr.strip()}")
     return cp.stdout
 
 

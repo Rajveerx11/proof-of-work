@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 
 from .types import Finding, MutationResult, Severity, TestResult, Verdict
 
@@ -34,12 +35,22 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           extra_findings: list[Finding] | None = None) -> Verdict:
     """Run the full gate against a changeset and return a fact-based Verdict."""
     from .core.detector import ALL_CHECKS
-    from .core.gitdiff import collect_diff
+    from .core.gitdiff import _git, collect_diff
 
     root = os.path.abspath(root)
-    db_path = db_path or os.path.join(root, DEFAULT_DB)
 
-    diff = collect_diff(root, base_ref, staged=staged)
+    try:
+        diff = collect_diff(root, base_ref, staged=staged)
+        if db_path is None:
+            # Staged checks may not add log files to the working tree. An explicit
+            # --db path is caller-requested output and is used unchanged.
+            db_path = (os.path.join(root, _git(root, "rev-parse", "--git-path",
+                                                  "proofofwork/log.db").strip())
+                       if staged else os.path.join(root, DEFAULT_DB))
+    except Exception as exc:  # noqa: BLE001 - git failures must not become empty passing diffs
+        detail = f"cannot collect git diff: {exc}"
+        return Verdict(passed=False, reasons=[f"BLOCK git-diff: {detail}"],
+                       findings=[Finding("git-diff", Severity.BLOCK, detail)])
 
     findings: list[Finding] = list(extra_findings or ())
     for check_fn in ALL_CHECKS:
@@ -47,7 +58,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             findings.extend(check_fn(diff, root))
         except Exception as e:  # noqa: BLE001 - a broken check must never crash the gate
             findings.append(Finding(rule=f"check-error:{getattr(check_fn, '__name__', '?')}",
-                                    severity=Severity.INFO, message=str(e)))
+                                    severity=Severity.BLOCK, message=str(e)))
 
     # Learned rules (grown by the self-improving loop) run alongside the built-ins but stay
     # out of ALL_CHECKS so that set remains the fixed, human-authored core.
@@ -60,6 +71,9 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
 
     tests = TestResult()
     coverage_baseline: float | None = None
+    if update_baseline and not run_tests:
+        findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK,
+                                "--update-baseline requires a successful test run"))
     if run_tests:
         from .core.detector.coverage_delta import (
             coverage_findings,
@@ -69,12 +83,25 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         from .core.runner import run_tests as _run
         from .core.sandbox import get_sandbox
 
-        tests = _run(get_sandbox("local"), root, diff.languages())
-        coverage_baseline = read_baseline(root)
-        findings.extend(coverage_findings(tests, coverage_baseline,
-                                          threshold=coverage_drop_threshold))
-        if update_baseline and tests.coverage is not None:
-            write_baseline(root, tests.coverage)
+        try:
+            if staged:
+                with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as snapshot:
+                    _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
+                    tests = _run(get_sandbox("local"), snapshot, diff.languages())
+            else:
+                tests = _run(get_sandbox("local"), root, diff.languages())
+            coverage_baseline = read_baseline(root, staged=staged)
+            if update_baseline:
+                if staged:
+                    raise ValueError("--update-baseline is not supported with --staged")
+                if not (tests.ran and tests.passed is True and tests.coverage is not None):
+                    raise ValueError("--update-baseline requires passing tests with coverage")
+                write_baseline(root, tests.coverage)
+                coverage_baseline = tests.coverage
+            findings.extend(coverage_findings(tests, coverage_baseline,
+                                              threshold=coverage_drop_threshold))
+        except Exception as exc:  # noqa: BLE001 - execution and baseline errors fail closed
+            findings.append(Finding("test-execution-error", Severity.BLOCK, str(exc)))
 
     mutation = MutationResult()
     if run_mutation:
@@ -89,34 +116,45 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         from .judge import review
         judge_meta = review(diff)  # advisory ONLY — logged as metadata, never signed
 
-    passed, reasons = _decide(findings, tests)
+    passed, reasons = _decide(findings, tests, require_tests=run_tests)
     verdict = Verdict(passed=passed, reasons=reasons, findings=findings, tests=tests,
                       mutation=mutation, coverage_baseline=coverage_baseline, judge=judge_meta)
 
-    try:  # tamper-evident record (facts only); logging must never change the verdict
+    try:  # a passing signed verdict requires a durable log record
         from .log import build_envelope, record
         env = build_envelope(subject=_changeset_sha(diff), verdict=verdict)
         verdict.entry_hash = record(env, db_path)
-    except Exception as e:  # noqa: BLE001 - logging is strictly non-enforcing
-        verdict.reasons.append(f"(log unavailable: {e})")
+    except Exception as e:  # noqa: BLE001 - never claim a signed pass without its log
+        verdict.passed = False
+        verdict.entry_hash = ""
+        verdict.reasons.append(f"BLOCK log-unavailable: {e}")
 
     return verdict
 
 
-def _decide(findings: list[Finding], tests: TestResult) -> tuple[bool, list[str]]:
+def _decide(findings: list[Finding], tests: TestResult, *,
+            require_tests: bool = False) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     blocked = [f for f in findings if f.severity == Severity.BLOCK]
     tests_failed = tests.ran and tests.passed is False
+    tests_missing = require_tests and not (tests.ran and tests.passed is True)
 
     for f in blocked:
         reasons.append(f"BLOCK {f.rule}: {f.message}")
     if tests_failed:
         reasons.append("tests failed on a clean re-run")
+    elif tests_missing:
+        reasons.append("BLOCK tests-unavailable: no successful test run")
     for f in findings:
         if f.severity == Severity.WARN:
             reasons.append(f"warn {f.rule}: {f.message}")
 
-    passed = not blocked and not tests_failed
+    passed = not blocked and not tests_failed and not tests_missing
+    if passed and not require_tests:
+        reasons.append("detector-only: tests were not run; no test pass claimed")
     if passed and not reasons:
-        reasons.append("no cheat signals; facts check out")
+        if any(f.rule == "coverage-baseline-missing" for f in findings):
+            reasons.append("tests passed; coverage baseline unavailable (coverage not enforced)")
+        else:
+            reasons.append("no cheat signals; facts check out")
     return passed, reasons

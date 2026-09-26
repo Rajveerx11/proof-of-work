@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import textwrap
 
-from proofofwork.core.detector.coverage_delta import coverage_findings
+from proofofwork.core.detector.coverage_delta import coverage_findings, read_baseline
 from proofofwork.core.runner import run_tests
 from proofofwork.core.sandbox.local import LocalSandbox
 from proofofwork.types import Severity, TestResult
@@ -53,10 +53,27 @@ def test_coverage_within_threshold_no_block():
     assert coverage_findings(tests, baseline=90.0, threshold=2.0) == []
 
 
-def test_missing_baseline_is_info():
+def test_missing_baseline_blocks_measured_pass():
     tests = TestResult(ran=True, passed=True, coverage=80.0)
     findings = coverage_findings(tests, baseline=None)
 
     assert len(findings) == 1
     assert findings[0].rule == "coverage-baseline-missing"
+    assert findings[0].severity == Severity.BLOCK
+
+
+def test_missing_baseline_without_coverage_is_transparent():
+    findings = coverage_findings(TestResult(ran=True, passed=True), baseline=None)
     assert findings[0].severity == Severity.INFO
+    assert "coverage unavailable" in findings[0].message
+
+
+def test_read_baseline_ignores_malformed_file(tmp_path):
+    path = tmp_path / ".proofofwork" / "baseline.json"
+    path.parent.mkdir()
+    path.write_text("not json")
+    assert read_baseline(str(tmp_path)) is None
+    path.write_text('{"coverage": NaN}')
+    assert read_baseline(str(tmp_path)) is None
+    path.write_text('{"coverage": 200}')
+    assert read_baseline(str(tmp_path)) is None

@@ -1,6 +1,7 @@
 """CLI contract: exit code mirrors verdict.passed; --json emits the verdict dict.
 Engine is patched — real git repos / test runs are out of scope for a unit test."""
 import json
+import subprocess
 
 from proofofwork import engine
 from proofofwork.interfaces import cli
@@ -40,6 +41,16 @@ def test_default_subcommand(monkeypatch):
     # no subcommand -> defaults to `check`
     monkeypatch.setattr(engine, "check", lambda *a, **k: _verdict(True))
     assert cli.main(["--no-tests"]) == 0
+
+
+def test_bad_ref_cli_fails_closed_in_json(tmp_path, capsys):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    assert cli.main(["check", "--root", str(tmp_path), "--base", "missing-ref",
+                     "--no-tests", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["passed"] is False
+    assert data["findings"][0]["rule"] == "git-diff"
+    assert data["entry_hash"] == ""
 
 
 def test_eval_run_json(monkeypatch, capsys):

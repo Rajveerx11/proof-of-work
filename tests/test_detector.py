@@ -167,6 +167,23 @@ def test_collect_diff_roundtrip(tmp_path):
     assert "    return 1" in by_path["app.py"].removed
 
 
-def test_collect_diff_empty_on_non_repo(tmp_path):
-    # graceful degradation: not a git repo -> empty diff, no crash
-    assert collect_diff(str(tmp_path), "HEAD").files == []
+def test_collect_diff_fails_closed_on_non_repo_and_bad_ref(tmp_path):
+    with pytest.raises(RuntimeError, match="git diff"):
+        collect_diff(str(tmp_path), "HEAD")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    with pytest.raises(RuntimeError, match="git diff"):
+        collect_diff(str(tmp_path), "not-a-real-ref")
+
+
+def test_collect_diff_fails_if_second_git_call_fails(monkeypatch):
+    from proofofwork.core import gitdiff
+    original = gitdiff._git
+
+    def fail_patch(root, *args):
+        if "--unified=0" in args:
+            raise RuntimeError("patch unavailable")
+        return original(root, *args)
+
+    monkeypatch.setattr(gitdiff, "_git", fail_patch)
+    with pytest.raises(RuntimeError, match="patch unavailable"):
+        collect_diff(".", "HEAD")
