@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import textwrap
 
-from proofofwork.core.detector.coverage_delta import coverage_findings, read_baseline
+import pytest
+
+from proofofwork.core import runner
+from proofofwork.core.detector.coverage_delta import (
+    coverage_findings,
+    read_baseline,
+    write_baseline,
+)
 from proofofwork.core.runner import run_tests
 from proofofwork.core.sandbox.local import LocalSandbox
 from proofofwork.types import Severity, TestResult
@@ -68,6 +75,37 @@ def test_missing_baseline_without_coverage_is_transparent():
     assert "coverage unavailable" in findings[0].message
 
 
+def test_mixed_suites_both_run_without_combining_incomparable_coverage(monkeypatch, tmp_path):
+    calls = []
+
+    def python(*args):
+        calls.append("python")
+        return TestResult(ran=True, passed=True, coverage=90, framework="pytest")
+
+    def javascript(*args):
+        calls.append("js")
+        return TestResult(ran=True, passed=False, coverage=75, framework="vitest")
+
+    monkeypatch.setattr(runner, "_run_python", python)
+    monkeypatch.setattr(runner, "_run_js", javascript)
+    result = run_tests(LocalSandbox(), str(tmp_path), {"python", "js"})
+    assert calls == ["python", "js"]
+    assert result.ran and result.passed is False
+    assert result.framework == "pytest+vitest" and result.coverage is None
+    monkeypatch.setattr(runner, "_run_js", lambda *args: None)
+    missing = run_tests(LocalSandbox(), str(tmp_path), {"python", "ts"})
+    assert not missing.ran and "JS/TS test suite unavailable" in missing.raw
+
+
+def test_invalid_measured_coverage_blocks_and_cannot_be_written(tmp_path):
+    for value in (float("nan"), float("inf"), -1, 101, True):
+        findings = coverage_findings(TestResult(ran=True, passed=True, coverage=value), 90)
+        assert findings[0].rule == "coverage-invalid"
+        with pytest.raises(ValueError, match="finite percentage"):
+            write_baseline(str(tmp_path), value)
+    assert coverage_findings(TestResult(ran=True, passed=True), 90)[0].rule == "coverage-unavailable"
+
+
 def test_read_baseline_ignores_malformed_file(tmp_path):
     path = tmp_path / ".proofofwork" / "baseline.json"
     path.parent.mkdir()
@@ -76,4 +114,6 @@ def test_read_baseline_ignores_malformed_file(tmp_path):
     path.write_text('{"coverage": NaN}')
     assert read_baseline(str(tmp_path)) is None
     path.write_text('{"coverage": 200}')
+    assert read_baseline(str(tmp_path)) is None
+    path.write_text('{"coverage": true}')
     assert read_baseline(str(tmp_path)) is None

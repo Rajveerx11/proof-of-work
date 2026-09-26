@@ -77,7 +77,9 @@ def test_log_failure_cannot_produce_signed_pass(monkeypatch, tmp_path):
 def test_baseline_bootstrap_requires_passing_measured_tests(monkeypatch, tmp_path):
     monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
     baseline = tmp_path / ".proofofwork" / "baseline.json"
-    for result in (TestResult(), TestResult(ran=True, passed=False, coverage=77)):
+    for result in (TestResult(), TestResult(ran=True, passed=False, coverage=77),
+                   TestResult(ran=True, passed=True, coverage=float("nan")),
+                   TestResult(ran=True, passed=True, coverage=101)):
         monkeypatch.setattr(runner, "run_tests", lambda *a, result=result: result)
         verdict = engine.check(str(tmp_path), update_baseline=True)
         assert not verdict.passed
@@ -191,6 +193,54 @@ def test_staged_baseline_uses_committed_value_not_staged_edit(monkeypatch, tmp_p
     assert _git(tmp_path, "ls-files", "--stage") == before
 
 
+def test_pr_cannot_lower_base_coverage_baseline(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    baseline = tmp_path / ".proofofwork" / "baseline.json"
+    baseline.parent.mkdir()
+    baseline.write_text('{"coverage": 90}')
+    (tmp_path / "app.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-f", ".proofofwork/baseline.json")
+    _git(tmp_path, "add", "app.py")
+    _git(tmp_path, "commit", "-qm", "trusted base")
+    base = _git(tmp_path, "rev-parse", "HEAD").strip()
+    baseline.write_text('{"coverage": 0}')
+    (tmp_path / "app.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "-f", ".proofofwork/baseline.json")
+    _git(tmp_path, "add", "app.py")
+    _git(tmp_path, "commit", "-qm", "lower coverage baseline")
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
+                                                                     coverage=70))
+    verdict = engine.check(str(tmp_path), base_ref=base)
+    assert not verdict.passed
+    assert verdict.coverage_baseline == 90
+    assert any(f.rule == "coverage-drop" for f in verdict.findings)
+    assert not engine.check(str(tmp_path), base_ref=base, update_baseline=True).passed
+    assert baseline.read_text() == '{"coverage": 0}'
+
+
+def test_first_pr_baseline_adoption_is_explicit(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "app.py")
+    _git(tmp_path, "commit", "-qm", "base without baseline")
+    base = _git(tmp_path, "rev-parse", "HEAD").strip()
+    baseline = tmp_path / ".proofofwork" / "baseline.json"
+    baseline.parent.mkdir()
+    baseline.write_text('{"coverage": 10}')
+    _git(tmp_path, "add", "-f", ".proofofwork/baseline.json")
+    _git(tmp_path, "commit", "-qm", "first proposed baseline")
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
+                                                                     coverage=80))
+    verdict = engine.check(str(tmp_path), base_ref=base)
+    assert not verdict.passed
+    assert verdict.coverage_baseline is None
+    assert any(f.rule == "coverage-baseline-missing" for f in verdict.findings)
+
+
 def test_staged_bootstrap_uses_git_metadata_only(monkeypatch, tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -240,6 +290,25 @@ def test_staged_js_receives_ignored_dependencies_and_git_context(monkeypatch, tm
     (tmp_path / "node_modules" / "example" / "index.js").unlink()
     (tmp_path / "node_modules" / "example").rmdir()
     (tmp_path / "node_modules").rmdir()
+    verdict = engine.check(str(tmp_path), staged=True)
+    assert not verdict.passed
+    assert "installed, ignored node_modules" in " ".join(verdict.reasons)
+
+
+def test_staged_python_only_does_not_require_js_dependencies(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.js").write_text("const x = 1;\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "start")
+    (tmp_path / "app.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "app.py")
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True))
+    assert engine.check(str(tmp_path), staged=True).passed
+    (tmp_path / "app.js").write_text("const x = 2;\n")
+    _git(tmp_path, "add", "app.js")
     verdict = engine.check(str(tmp_path), staged=True)
     assert not verdict.passed
     assert "installed, ignored node_modules" in " ".join(verdict.reasons)

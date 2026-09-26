@@ -21,14 +21,23 @@ def _tail(out: RunOutput) -> str:
 
 
 def run_tests(sandbox: Sandbox, root: str, languages: set[str]) -> TestResult:
-    if "python" in languages:
-        r = _run_python(sandbox, root)
-        if r is not None:
-            return r
-    if "js" in languages or "ts" in languages:
-        r = _run_js(sandbox, root)
-        if r is not None:
-            return r
+    python = "python" in languages
+    javascript = bool(languages.intersection({"js", "ts"}))
+    if python and javascript:
+        py = _run_python(sandbox, root)
+        js = _run_js(sandbox, root)
+        if py is None or js is None:
+            missing = "Python" if py is None else "JS/TS"
+            return TestResult(ran=False, framework="+".join(
+                r.framework for r in (py, js) if r is not None),
+                raw=f"required {missing} test suite unavailable; both language suites required")
+        return TestResult(ran=True, passed=py.passed is True and js.passed is True,
+                          coverage=None, framework=f"{py.framework}+{js.framework}",
+                          raw=f"Python: {py.raw}\nJS/TS: {js.raw}")
+    if python:
+        return _run_python(sandbox, root) or TestResult(ran=False)
+    if javascript:
+        return _run_js(sandbox, root) or TestResult(ran=False)
     return TestResult(ran=False)
 
 

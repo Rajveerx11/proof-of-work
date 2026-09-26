@@ -22,7 +22,15 @@ def baseline_path(root: str, *, staged: bool = False) -> str:
     return os.path.join(root, _BASELINE)
 
 
-def baseline_exists(root: str, *, staged: bool = False) -> bool:
+def baseline_exists(root: str, *, staged: bool = False,
+                    base_ref: str | None = None) -> bool:
+    if base_ref is not None:
+        from ..gitdiff import _git
+        try:
+            _git(root, "cat-file", "-e", f"{base_ref}:.proofofwork/baseline.json")
+            return True
+        except RuntimeError:
+            pass
     if staged:
         from ..gitdiff import _git
         try:
@@ -33,25 +41,37 @@ def baseline_exists(root: str, *, staged: bool = False) -> bool:
     return os.path.lexists(baseline_path(root, staged=staged))
 
 
-def read_baseline(root: str, *, staged: bool = False) -> float | None:
+def read_baseline(root: str, *, staged: bool = False,
+                  base_ref: str | None = None) -> float | None:
     try:
-        if staged:
+        if base_ref is not None:
+            from ..gitdiff import _git
+            content = _git(root, "show", f"{base_ref}:.proofofwork/baseline.json")
+            value = json.loads(content)["coverage"]
+        elif staged:
             from ..gitdiff import _git
             try:
                 content = _git(root, "show", "HEAD:.proofofwork/baseline.json")
             except RuntimeError:
                 with open(baseline_path(root, staged=True), encoding="utf-8") as f:
                     content = f.read()
-            value = float(json.loads(content)["coverage"])
+            value = json.loads(content)["coverage"]
         else:
             with open(baseline_path(root), encoding="utf-8") as f:
-                value = float(json.load(f)["coverage"])
-        return value if math.isfinite(value) and 0 <= value <= 100 else None
+                value = json.load(f)["coverage"]
+        return float(value) if valid_coverage(value) else None
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return None
 
 
+def valid_coverage(value: object) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and 0 <= value <= 100)
+
+
 def write_baseline(root: str, coverage: float, *, staged: bool = False) -> None:
+    if not valid_coverage(coverage):
+        raise ValueError("coverage must be a finite percentage between 0 and 100")
     path = baseline_path(root, staged=staged)
     directory = os.path.dirname(path)
     if os.path.islink(directory):
@@ -64,6 +84,12 @@ def write_baseline(root: str, coverage: float, *, staged: bool = False) -> None:
 
 def coverage_findings(tests: TestResult, baseline: float | None, *,
                       threshold: float = 2.0) -> list[Finding]:
+    if tests.coverage is not None and not valid_coverage(tests.coverage):
+        return [Finding(rule="coverage-invalid", severity=Severity.BLOCK,
+                        message="measured coverage must be a finite percentage between 0 and 100")]
+    if baseline is not None and not valid_coverage(baseline):
+        return [Finding(rule="coverage-baseline-invalid", severity=Severity.BLOCK,
+                        message="coverage baseline must be a finite percentage between 0 and 100")]
     if baseline is None:
         return [Finding(
             rule="coverage-baseline-missing",
@@ -72,6 +98,10 @@ def coverage_findings(tests: TestResult, baseline: float | None, *,
             message=("no coverage baseline recorded; run with --update-baseline after passing "
                      "tests to bootstrap one" if tests.coverage is not None
                      else "coverage unavailable; no coverage baseline recorded or enforced"))]
+
+    if tests.passed is True and tests.coverage is None:
+        return [Finding(rule="coverage-unavailable", severity=Severity.INFO,
+                        message="coverage unavailable; baseline comparison not enforced")]
 
     if (tests.passed is True and tests.coverage is not None
             and (baseline - tests.coverage) > threshold):

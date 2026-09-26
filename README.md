@@ -121,13 +121,20 @@ git add -f .proofofwork/baseline.json
 ```
 
 Staged checks prioritize the committed HEAD value over local metadata (so the new
-baseline is trusted only after the reviewed commit).
-Bootstrap fails if any baseline already exists, if coverage is unavailable, or if
-another gate check fails; it never updates a baseline to accept a drop. A fresh
-clone using the hook must bootstrap its own local baseline or receive the reviewed
-committed baseline. Staged tests run in a temporary Git worktree over the index
-content, with ignored `node_modules` copied from the working tree for JS/TS. Install
-these dependencies first; missing/non-ignored dependencies, links out of
+baseline is trusted only after the reviewed commit). Ordinary `--base <ref>` checks
+(including CI) use the baseline in the verified base commit, never the candidate's
+working-tree or newly committed baseline. If the base has no baseline, a candidate's
+first proposed baseline is **not** silently trusted: measured coverage blocks with
+`coverage-baseline-missing` until a baseline is explicitly bootstrapped locally and
+reviewed into the base branch. Ordinary local checks without `--base` still use the
+local baseline. Bootstrap fails if any baseline already exists, if coverage is invalid
+or unavailable, or if another gate check fails; it never updates a baseline to accept
+a drop. A fresh clone using the hook must bootstrap its own local baseline or receive
+the reviewed committed baseline. Staged tests run in a temporary Git worktree over the
+index content, with ignored `node_modules` copied from the working tree only when
+JS/TS files changed. Mixed Python and JS/TS changes require both suites; their
+coverage percentages are not combined, so coverage comparison is reported as unavailable.
+Install JS/TS dependencies first; missing/non-ignored dependencies, links out of
 `node_modules`, and staged symlinks fail closed. This is local execution of
 trusted code, not a security sandbox; ignored installed dependencies must be trusted.
 

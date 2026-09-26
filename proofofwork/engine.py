@@ -83,6 +83,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             baseline_path,
             coverage_findings,
             read_baseline,
+            valid_coverage,
             write_baseline,
         )
         from .core.runner import run_tests as _run
@@ -101,16 +102,21 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                         _git(root, "worktree", "remove", "--force", snapshot)
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
-            coverage_baseline = read_baseline(root, staged=staged)
+            # Explicit base comparisons trust only the verified base commit, never the
+            # candidate worktree's (or candidate commit's) baseline.
+            trusted_ref = (_git(root, "rev-parse", "--verify", "--end-of-options",
+                                f"{base_ref}^{{commit}}").strip()
+                           if not staged and base_ref != "HEAD" else None)
+            coverage_baseline = read_baseline(root, staged=staged, base_ref=trusted_ref)
             # Suppress only the missing-baseline finding during explicit bootstrap;
             # always evaluate a present trusted baseline before deciding to write.
             if coverage_baseline is not None or not update_baseline:
                 findings.extend(coverage_findings(tests, coverage_baseline,
                                                   threshold=coverage_drop_threshold))
             if update_baseline:
-                if baseline_exists(root, staged=staged):
+                if baseline_exists(root, staged=staged, base_ref=trusted_ref):
                     raise ValueError("coverage baseline already exists; --update-baseline is bootstrap-only")
-                if not (tests.ran and tests.passed is True and tests.coverage is not None):
+                if not (tests.ran and tests.passed is True and valid_coverage(tests.coverage)):
                     raise ValueError("--update-baseline requires passing tests with coverage")
         except Exception as exc:  # noqa: BLE001 - execution and baseline errors fail closed
             findings.append(Finding("test-execution-error", Severity.BLOCK, str(exc)))
@@ -204,7 +210,7 @@ def _decide(findings: list[Finding], tests: TestResult, *,
     if tests_failed:
         reasons.append("tests failed on a clean re-run")
     elif tests_missing:
-        reasons.append("BLOCK tests-unavailable: no successful test run")
+        reasons.append(f"BLOCK tests-unavailable: {tests.raw or 'no successful test run'}")
     for f in findings:
         if f.severity == Severity.WARN:
             reasons.append(f"warn {f.rule}: {f.message}")
