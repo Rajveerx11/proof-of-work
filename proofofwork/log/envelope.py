@@ -28,6 +28,7 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
             "ruleset_version": "v1",
             "tests_passed": verdict.tests.passed,
             "coverage": verdict.tests.coverage,
+            "js_coverage": verdict.tests.js_coverage,
             "timestamp": datetime.now(UTC).isoformat(),
         },
     }

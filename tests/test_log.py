@@ -14,6 +14,12 @@ def _verdict(passed: bool) -> Verdict:
     )
 
 
+def test_signed_envelope_includes_mixed_js_coverage():
+    verdict = _verdict(True)
+    verdict.tests.js_coverage = 83.0
+    assert build_envelope("a" * 64, verdict)["predicate"]["js_coverage"] == 83.0
+
+
 def test_chain_verifies_then_tamper_breaks(tmp_path):
     db = str(tmp_path / "log.db")
 

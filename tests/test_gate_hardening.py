@@ -154,6 +154,17 @@ def test_mixed_coverage_checks_both_suites_against_scalar_baseline(monkeypatch, 
     assert json.loads(baseline.read_text()) == {"coverage": 90}
 
 
+def test_mixed_js_coverage_requires_missing_baseline_bootstrap(monkeypatch, tmp_path):
+    monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(
+        ran=True, passed=True, coverage=None, js_coverage=75, framework="pytest+vitest"))
+    verdict = engine.check(str(tmp_path))
+    assert not verdict.passed
+    assert any(f.rule == "coverage-baseline-missing" and f.severity == Severity.BLOCK
+               for f in verdict.findings)
+    assert not engine.check(str(tmp_path), update_baseline=True).passed
+
+
 def test_learned_exception_blocks(monkeypatch, tmp_path):
     monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
 
