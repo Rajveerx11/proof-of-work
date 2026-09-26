@@ -1,7 +1,9 @@
 """Self-check: chain verifies clean; direct row tamper breaks it."""
+import json
 import sqlite3
 
 from proofofwork.log import build_envelope, record, verify_chain
+from proofofwork.log.envelope import canonical
 from proofofwork.types import Finding, Severity, Verdict
 from proofofwork.types import TestResult as _TestResult  # alias: avoid pytest collecting it
 
@@ -12,6 +14,33 @@ def _verdict(passed: bool) -> Verdict:
         findings=[Finding(rule="deleted-test", severity=Severity.BLOCK, message="x")],
         tests=_TestResult(ran=True, passed=passed, coverage=91.5, framework="pytest"),
     )
+
+
+def test_signed_envelope_includes_mixed_js_coverage():
+    verdict = _verdict(True)
+    verdict.tests.js_coverage = 83.0
+    assert build_envelope("a" * 64, verdict)["predicate"]["js_coverage"] == 83.0
+
+
+def test_invalid_coverage_is_normalized_in_signed_envelope(tmp_path):
+    verdict = _verdict(False)
+    verdict.tests.coverage = float("inf")
+    verdict.tests.js_coverage = float("nan")
+    envelope = build_envelope("a" * 64, verdict)
+    decoded = json.loads(canonical(envelope), parse_constant=lambda value: 1 / 0)
+    assert decoded["predicate"]["js_coverage"] is None
+    assert decoded["predicate"]["coverage"] is None
+    db = str(tmp_path / "log.db")
+    record(envelope, db)
+    assert verify_chain(db)
+
+
+def test_legacy_nonfinite_signed_entry_still_verifies(tmp_path):
+    db = str(tmp_path / "log.db")
+    legacy = build_envelope("a" * 64, _verdict(True))
+    legacy["predicate"]["coverage"] = float("nan")
+    record(legacy, db)
+    assert verify_chain(db)
 
 
 def test_chain_verifies_then_tamper_breaks(tmp_path):

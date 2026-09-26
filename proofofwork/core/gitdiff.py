@@ -41,19 +41,17 @@ def _is_test(path: str) -> bool:
 
 
 def _git(root: str, *args: str) -> str:
-    """Run git plumbing; return stdout, or '' on any failure (graceful degradation)."""
-    # ponytail: swallow-and-empty on error; a broken/absent repo yields an empty Diff
-    # rather than crashing the gate. Upgrade path: surface the stderr if callers need it.
+    """Run git plumbing; raise on errors so an incomplete diff cannot pass."""
     try:
         cp = subprocess.run(
             ["git", "-c", "core.quotepath=false", *args],
             cwd=root, capture_output=True, text=True, check=False,
             encoding="utf-8", errors="replace",
         )
-    except (OSError, ValueError):
-        return ""
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"git unavailable: {exc}") from exc
     if cp.returncode != 0:
-        return ""
+        raise RuntimeError(f"git {' '.join(args)} failed: {cp.stderr.strip()}")
     return cp.stdout
 
 
@@ -138,8 +136,12 @@ def parse_patch(text: str) -> Diff:
 
 
 def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> Diff:
+    # Resolve first: an option-looking ref (e.g. --quiet) must not change git diff's
+    # behavior or turn a real changeset into an empty passing diff.
+    commit = _git(root, "rev-parse", "--verify", "--end-of-options",
+                  f"{base_ref}^{{commit}}").strip()
     cached = ["--cached"] if staged else []
-    status_out = _git(root, "diff", "--name-status", "-z", *cached, base_ref)
+    status_out = _git(root, "diff", "--name-status", "-z", *cached, commit, "--")
     # Force raw textual diffing. A changeset-controlled .gitattributes file must not
     # suppress detector input with ``-diff`` or invoke a textconv/external driver.
     unified_out = _git(
@@ -151,7 +153,8 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
         "--no-ext-diff",
         "--no-textconv",
         *cached,
-        base_ref,
+        commit,
+        "--",
     )
 
     lines_by_path = _parse_unified(unified_out)

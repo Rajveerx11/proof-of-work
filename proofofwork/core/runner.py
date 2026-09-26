@@ -20,29 +20,41 @@ def _tail(out: RunOutput) -> str:
     return (out.stdout + out.stderr)[-_TAIL:]
 
 
-def run_tests(sandbox: Sandbox, root: str, languages: set[str]) -> TestResult:
-    if "python" in languages:
-        r = _run_python(sandbox, root)
-        if r is not None:
-            return r
-    if "js" in languages or "ts" in languages:
-        r = _run_js(sandbox, root)
-        if r is not None:
-            return r
+def run_tests(sandbox: Sandbox, root: str, languages: set[str], *,
+              python_env: dict[str, str] | None = None) -> TestResult:
+    python = "python" in languages
+    javascript = bool(languages.intersection({"js", "ts"}))
+    if python and javascript:
+        py = _run_python(sandbox, root, env=python_env)
+        js = _run_js(sandbox, root)
+        if py is None or js is None:
+            missing = "Python" if py is None else "JS/TS"
+            return TestResult(ran=False, framework="+".join(
+                r.framework for r in (py, js) if r is not None),
+                raw=f"required {missing} test suite unavailable; both language suites required")
+        return TestResult(ran=True, passed=py.passed is True and js.passed is True,
+                          coverage=py.coverage, js_coverage=js.coverage,
+                          framework=f"{py.framework}+{js.framework}",
+                          raw=f"Python: {py.raw}\nJS/TS: {js.raw}")
+    if python:
+        return _run_python(sandbox, root, env=python_env) or TestResult(ran=False)
+    if javascript:
+        return _run_js(sandbox, root) or TestResult(ran=False)
     return TestResult(ran=False)
 
 
 # --- Python: pytest, coverage via coverage.py if present ---
-def _has_module(sandbox: Sandbox, root: str, mod: str) -> bool:
-    out = sandbox.run([sys.executable, "-c", f"import {mod}"], cwd=root, timeout=30)
+def _has_module(sandbox: Sandbox, root: str, mod: str, env: dict[str, str] | None = None) -> bool:
+    out = sandbox.run([sys.executable, "-c", f"import {mod}"], cwd=root, env=env, timeout=30)
     return out.code == 0
 
 
-def _run_python(sandbox: Sandbox, root: str) -> TestResult | None:
-    if not _has_module(sandbox, root, "pytest"):
+def _run_python(sandbox: Sandbox, root: str, *,
+                env: dict[str, str] | None = None) -> TestResult | None:
+    if not _has_module(sandbox, root, "pytest", env):
         return None  # no recognizable python test tooling
 
-    if _has_module(sandbox, root, "coverage"):
+    if _has_module(sandbox, root, "coverage", env):
         # system temp, not `root`: `coverage json -o` takes an absolute path, so the
         # file never appears as an untracked entry inside the repo under test.
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as cov_file:
@@ -50,10 +62,10 @@ def _run_python(sandbox: Sandbox, root: str) -> TestResult | None:
         try:
             run = sandbox.run(
                 [sys.executable, "-m", "coverage", "run", "-m", "pytest", "-q"],
-                cwd=root)
+                cwd=root, env=env)
             sandbox.run(
                 [sys.executable, "-m", "coverage", "json", "-o", cov_path],
-                cwd=root, timeout=120)
+                cwd=root, env=env, timeout=120)
             coverage = _read_coverage_json(cov_path)
             return TestResult(ran=True, passed=(run.code == 0), coverage=coverage,
                               framework="pytest", raw=_tail(run))
@@ -64,7 +76,7 @@ def _run_python(sandbox: Sandbox, root: str) -> TestResult | None:
                 pass
 
     # coverage.py absent — exit-code only
-    run = sandbox.run([sys.executable, "-m", "pytest", "-q"], cwd=root)
+    run = sandbox.run([sys.executable, "-m", "pytest", "-q"], cwd=root, env=env)
     return TestResult(ran=True, passed=(run.code == 0), coverage=None,
                       framework="pytest", raw=_tail(run))
 

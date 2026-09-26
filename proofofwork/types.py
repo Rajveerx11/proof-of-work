@@ -64,7 +64,8 @@ class TestResult:
     __test__ = False  # not a pytest test class despite the Test* name
     ran: bool = False
     passed: bool | None = None         # None = could not determine
-    coverage: float | None = None      # percent 0..100
+    coverage: float | None = None      # percent 0..100 (Python for mixed suites)
+    js_coverage: float | None = None   # separate JS/TS percentage in mixed suites
     framework: str = ""                # pytest | vitest | jest
     raw: str = ""                      # captured tail, for debugging
 
