@@ -11,8 +11,8 @@ from proofofwork.types import Severity, Verdict
 
 def canonical(obj) -> bytes:
     """Deterministic JSON: sorted keys, no whitespace, ASCII-only. Same bytes every time."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode()
+    # Preserve the historical encoding for verification of already-signed log entries.
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
 def build_envelope(subject: str, verdict: Verdict) -> dict:

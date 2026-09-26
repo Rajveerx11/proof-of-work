@@ -35,6 +35,14 @@ def test_invalid_coverage_is_normalized_in_signed_envelope(tmp_path):
     assert verify_chain(db)
 
 
+def test_legacy_nonfinite_signed_entry_still_verifies(tmp_path):
+    db = str(tmp_path / "log.db")
+    legacy = build_envelope("a" * 64, _verdict(True))
+    legacy["predicate"]["coverage"] = float("nan")
+    record(legacy, db)
+    assert verify_chain(db)
+
+
 def test_chain_verifies_then_tamper_breaks(tmp_path):
     db = str(tmp_path / "log.db")
 
