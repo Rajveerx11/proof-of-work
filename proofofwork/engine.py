@@ -97,9 +97,22 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     try:
                         _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
                         _prepare_staged_dependencies(root, snapshot, diff.languages())
-                        tests = _run(get_sandbox("local"), snapshot, diff.languages())
+                        python_env = (_staged_python_env(root, snapshot, directory)
+                                      if "python" in diff.languages() else None)
+                        tests = _run(get_sandbox("local"), snapshot, diff.languages(),
+                                     **({"python_env": python_env} if python_env else {}))
                     finally:
-                        _git(root, "worktree", "remove", "--force", snapshot)
+                        try:
+                            _git(root, "worktree", "remove", "--force", snapshot)
+                        except RuntimeError as remove_error:
+                            shutil.rmtree(snapshot, ignore_errors=True)
+                            try:
+                                _git(root, "worktree", "prune", "--expire", "now")
+                            except RuntimeError as prune_error:
+                                raise RuntimeError(
+                                    f"{remove_error}; worktree prune failed: {prune_error}"
+                                ) from remove_error
+                            raise
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
             # Explicit base comparisons trust only the verified base commit, never the
@@ -108,13 +121,18 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                                 f"{base_ref}^{{commit}}").strip()
                            if not staged and base_ref != "HEAD" else None)
             coverage_baseline = read_baseline(root, staged=staged, base_ref=trusted_ref)
+            existing_baseline = baseline_exists(root, staged=staged, base_ref=trusted_ref)
+            if existing_baseline and coverage_baseline is None:
+                findings.append(Finding("coverage-baseline-invalid", Severity.BLOCK,
+                                        "existing coverage baseline is malformed or invalid"))
             # Suppress only the missing-baseline finding during explicit bootstrap;
             # always evaluate a present trusted baseline before deciding to write.
-            if coverage_baseline is not None or not update_baseline:
+            if (not (existing_baseline and coverage_baseline is None)
+                    and (coverage_baseline is not None or not update_baseline)):
                 findings.extend(coverage_findings(tests, coverage_baseline,
                                                   threshold=coverage_drop_threshold))
             if update_baseline:
-                if baseline_exists(root, staged=staged, base_ref=trusted_ref):
+                if existing_baseline:
                     raise ValueError("coverage baseline already exists; --update-baseline is bootstrap-only")
                 if not (tests.ran and tests.passed is True and valid_coverage(tests.coverage)):
                     raise ValueError("--update-baseline requires passing tests with coverage")
@@ -123,11 +141,15 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
 
     mutation = MutationResult()
     if run_mutation:
-        from .core.mutation import run_mutation as _mut
-        mutation = _mut(root, diff.languages())
-        if mutation.ran and mutation.survived:
-            findings.append(Finding(rule="mutation:survivors", severity=Severity.WARN,
-                message=f"{mutation.survived} mutant(s) survived — tests may be gutted"))
+        if staged:
+            findings.append(Finding("mutation-staged-unavailable", Severity.BLOCK,
+                                    "staged mutation cannot run against the index snapshot"))
+        else:
+            from .core.mutation import run_mutation as _mut
+            mutation = _mut(root, diff.languages())
+            if mutation.ran and mutation.survived:
+                findings.append(Finding(rule="mutation:survivors", severity=Severity.WARN,
+                    message=f"{mutation.survived} mutant(s) survived — tests may be gutted"))
 
     judge_meta = None
     if use_judge:
@@ -172,14 +194,35 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     return verdict
 
 
+def _staged_python_env(root: str, snapshot: str, directory: str) -> dict[str, str]:
+    """Prefer the index tree and discard inherited worktree/editable import paths."""
+    bootstrap = Path(directory) / "python-bootstrap"
+    bootstrap.mkdir()
+    (bootstrap / "sitecustomize.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"source = Path({root!r}).resolve()\n"
+        "prefix = Path(sys.prefix).resolve()\n"
+        "sys.path[:] = [p for p in sys.path if not ("
+        "Path(p).resolve().is_relative_to(source) and "
+        "not Path(p).resolve().is_relative_to(prefix))]\n"
+        "sys.meta_path[:] = [finder for finder in sys.meta_path "
+        "if not getattr(finder, '__module__', '').startswith('__editable__')]\n",
+        encoding="utf-8",
+    )
+    return {"PYTHONPATH": os.pathsep.join((str(bootstrap), str(Path(snapshot) / "src"), snapshot)),
+            "PYTHONNOUSERSITE": "1"}
+
+
 def _prepare_staged_dependencies(root: str, snapshot: str, languages: set[str]) -> None:
     """Bring only ignored installed JS packages into the isolated index tree."""
     from .core.gitdiff import _git
 
+    snapshot_root = Path(snapshot).resolve()
     for parent, dirs, files in os.walk(snapshot, followlinks=False):
         for name in (*dirs, *files):
-            if (Path(parent) / name).is_symlink():
-                raise ValueError("staged snapshot contains a symlink; cannot safely run tests")
+            path = Path(parent) / name
+            if path.is_symlink() and not path.resolve().is_relative_to(snapshot_root):
+                raise ValueError(f"staged snapshot link escapes snapshot: {path}")
     if not languages.intersection({"js", "ts"}):
         return
     packages = Path(root) / "node_modules"

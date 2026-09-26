@@ -175,15 +175,26 @@ def test_collect_diff_fails_closed_on_non_repo_and_bad_ref(tmp_path):
         collect_diff(str(tmp_path), "not-a-real-ref")
 
 
-def test_collect_diff_fails_if_second_git_call_fails(monkeypatch):
+def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
     from proofofwork.core import gitdiff
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("value = 1\n")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("value = 2\n")
     original = gitdiff._git
+    calls = []
 
     def fail_patch(root, *args):
+        calls.append(args)
         if "--unified=0" in args:
             raise RuntimeError("patch unavailable")
         return original(root, *args)
 
     monkeypatch.setattr(gitdiff, "_git", fail_patch)
     with pytest.raises(RuntimeError, match="patch unavailable"):
-        collect_diff(".", "HEAD")
+        collect_diff(str(tmp_path), "HEAD")
+    assert any("--name-status" in call for call in calls)
+    assert "--unified=0" in calls[-1]

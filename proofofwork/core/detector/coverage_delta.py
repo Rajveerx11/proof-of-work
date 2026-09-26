@@ -30,7 +30,7 @@ def baseline_exists(root: str, *, staged: bool = False,
             _git(root, "cat-file", "-e", f"{base_ref}:.proofofwork/baseline.json")
             return True
         except RuntimeError:
-            pass
+            return False
     if staged:
         from ..gitdiff import _git
         try:

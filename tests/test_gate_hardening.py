@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import runpy
 import subprocess
+import sys
 from pathlib import Path
 
 from proofofwork import engine
@@ -170,6 +172,47 @@ def test_staged_runs_index_not_worktree_and_does_not_mutate_either(tmp_path):
     assert baseline.read_text() == '{"coverage": 0}'
 
 
+def test_staged_python_src_ignores_unstaged_and_inherited_imports(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "feature.py").write_text("value = 1\n")
+    test = tmp_path / "test_feature.py"
+    test.write_text("from feature import value\n\ndef test_value():\n    assert value == 2\n")
+    baseline = tmp_path / ".proofofwork" / "baseline.json"
+    baseline.parent.mkdir()
+    baseline.write_text('{"coverage": 0}')
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    (src / "feature.py").write_text("value = 2\n")
+    _git(tmp_path, "add", "src/feature.py")
+    (src / "feature.py").write_text("value = 3\n")
+    monkeypatch.setenv("PYTHONPATH", str(src))
+    verdict = engine.check(str(tmp_path), staged=True)
+    assert verdict.passed, verdict.reasons
+    assert verdict.tests.passed is True
+    assert (src / "feature.py").read_text() == "value = 3\n"
+    assert not engine.check(str(tmp_path)).passed
+
+
+def test_staged_bootstrap_removes_editable_src_path(monkeypatch, tmp_path):
+    source = tmp_path / "project"
+    source.mkdir()
+    src = source / "src"
+    src.mkdir()
+    snapshot = tmp_path / "snapshot"
+    env = engine._staged_python_env(str(source), str(snapshot), str(tmp_path))
+    assert str(snapshot / "src") in env["PYTHONPATH"]
+    finder = type("EditableFinder", (), {"__module__": "__editable___project_finder"})()
+    monkeypatch.setattr(sys, "path", [*sys.path, str(src)])
+    monkeypatch.setattr(sys, "meta_path", [*sys.meta_path, finder])
+    runpy.run_path(str(tmp_path / "python-bootstrap" / "sitecustomize.py"))
+    assert str(src) not in sys.path
+    assert finder not in sys.meta_path
+
+
 def test_staged_baseline_uses_committed_value_not_staged_edit(monkeypatch, tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -184,8 +227,8 @@ def test_staged_baseline_uses_committed_value_not_staged_edit(monkeypatch, tmp_p
     (tmp_path / "app.py").write_text("x = 2\n")
     _git(tmp_path, "add", "-A")
     before = _git(tmp_path, "ls-files", "--stage")
-    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
-                                                                     coverage=80))
+    monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True,
+                                                                          coverage=80))
     verdict = engine.check(str(tmp_path), staged=True)
     assert verdict.passed, verdict.reasons
     assert verdict.coverage_baseline == 0
@@ -251,8 +294,8 @@ def test_staged_bootstrap_uses_git_metadata_only(monkeypatch, tmp_path):
     (tmp_path / "app.py").write_text("value = 2\n")
     _git(tmp_path, "add", "-A")
     index_before = _git(tmp_path, "ls-files", "--stage")
-    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True,
-                                                                     coverage=65))
+    monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True,
+                                                                          coverage=65))
     verdict = engine.check(str(tmp_path), staged=True, update_baseline=True)
     assert verdict.passed, verdict.reasons
     assert not (tmp_path / ".proofofwork" / "baseline.json").exists()
@@ -305,13 +348,97 @@ def test_staged_python_only_does_not_require_js_dependencies(monkeypatch, tmp_pa
     _git(tmp_path, "commit", "-qm", "start")
     (tmp_path / "app.py").write_text("x = 2\n")
     _git(tmp_path, "add", "app.py")
-    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True))
+    monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True))
     assert engine.check(str(tmp_path), staged=True).passed
     (tmp_path / "app.js").write_text("const x = 2;\n")
     _git(tmp_path, "add", "app.js")
     verdict = engine.check(str(tmp_path), staged=True)
     assert not verdict.passed
     assert "installed, ignored node_modules" in " ".join(verdict.reasons)
+
+
+def test_staged_safe_symlink_allowed_and_escaping_symlink_blocked(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "core.symlinks", "true")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    (tmp_path / "alias.py").symlink_to("app.py")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / "app.py").write_text("value = 2\n")
+    _git(tmp_path, "add", "app.py")
+    monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True))
+    assert engine.check(str(tmp_path), staged=True).passed
+    (tmp_path / "alias.py").unlink()
+    (tmp_path / "alias.py").symlink_to("../outside.py")
+    _git(tmp_path, "add", "alias.py")
+    verdict = engine.check(str(tmp_path), staged=True)
+    assert not verdict.passed
+    assert any("link escapes snapshot" in reason for reason in verdict.reasons)
+
+
+def test_failed_worktree_remove_prunes_metadata(monkeypatch, tmp_path):
+    from proofofwork.core import gitdiff
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / "app.py").write_text("value = 2\n")
+    _git(tmp_path, "add", "app.py")
+    monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True))
+    original = gitdiff._git
+    commands = []
+
+    def remove_fails(root, *args):
+        if args[:3] == ("worktree", "remove", "--force"):
+            commands.append(("remove", args[3]))
+            raise RuntimeError("remove failed")
+        if args[:2] == ("worktree", "prune"):
+            commands.append(("prune", args[2:]))
+        return original(root, *args)
+
+    monkeypatch.setattr(gitdiff, "_git", remove_fails)
+    verdict = engine.check(str(tmp_path), staged=True)
+    assert not verdict.passed
+    assert any("remove failed" in reason for reason in verdict.reasons)
+    assert commands[1] == ("prune", ("--expire", "now"))
+    assert not Path(commands[0][1]).exists()
+    assert _git(tmp_path, "worktree", "list", "--porcelain").count("worktree ") == 1
+
+
+def test_staged_mutation_fails_closed_without_touching_worktree(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / "app.py").write_text("value = 2\n")
+    _git(tmp_path, "add", "app.py")
+    (tmp_path / "app.py").write_text("value = 3\n")
+    def must_not_run(*args):
+        raise AssertionError("mutation ran on worktree")
+    monkeypatch.setattr("proofofwork.core.mutation.run_mutation", must_not_run)
+    verdict = engine.check(str(tmp_path), staged=True, run_tests=False, run_mutation=True)
+    assert not verdict.passed
+    assert any(f.rule == "mutation-staged-unavailable" for f in verdict.findings)
+    assert (tmp_path / "app.py").read_text() == "value = 3\n"
+
+
+def test_malformed_baseline_blocks_even_without_coverage(monkeypatch, tmp_path):
+    monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(ran=True, passed=True))
+    baseline = tmp_path / ".proofofwork" / "baseline.json"
+    baseline.parent.mkdir()
+    baseline.write_text("not json")
+    verdict = engine.check(str(tmp_path))
+    assert not verdict.passed
+    assert any(f.rule == "coverage-baseline-invalid" for f in verdict.findings)
+    assert not any(f.rule == "coverage-baseline-missing" for f in verdict.findings)
 
 
 def test_extra_block_still_enforced_in_detector_only_mode(monkeypatch, tmp_path):
