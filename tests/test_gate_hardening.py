@@ -1,11 +1,14 @@
 """Fail-closed behavior at the production gate boundaries."""
 from __future__ import annotations
 
+import importlib
 import json
 import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 from proofofwork import engine
 from proofofwork.core import detector, runner
@@ -197,20 +200,43 @@ def test_staged_python_src_ignores_unstaged_and_inherited_imports(monkeypatch, t
     assert not engine.check(str(tmp_path)).passed
 
 
-def test_staged_bootstrap_removes_editable_src_path(monkeypatch, tmp_path):
+def test_staged_bootstrap_preserves_unrelated_editable_finder(monkeypatch, tmp_path):
     source = tmp_path / "project"
-    source.mkdir()
     src = source / "src"
-    src.mkdir()
+    src.mkdir(parents=True)
+    (src / "unstaged_feature.py").write_text("value = 'unstaged'\n")
+    dependency = tmp_path / "dependency" / "editable_dependency_test.py"
+    dependency.parent.mkdir()
+    dependency.write_text("value = 'installed'\n")
     snapshot = tmp_path / "snapshot"
     env = engine._staged_python_env(str(source), str(snapshot), str(tmp_path))
     assert str(snapshot / "src") in env["PYTHONPATH"]
-    finder = type("EditableFinder", (), {"__module__": "__editable___project_finder"})()
+
+    def finder_for(name, path):
+        module_name = f"__editable___{name}_finder"
+        module = ModuleType(module_name)
+        module.MAPPING = {name: str(path)}
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == name:
+                return importlib.util.spec_from_file_location(fullname, module.MAPPING[name])
+            return None
+
+        return type("EditableFinder", (), {"__module__": module_name,
+                                            "find_spec": find_spec})()
+
+    own_finder = finder_for("unstaged_feature", src / "unstaged_feature.py")
+    dependency_finder = finder_for("editable_dependency_test", dependency)
     monkeypatch.setattr(sys, "path", [*sys.path, str(src)])
-    monkeypatch.setattr(sys, "meta_path", [*sys.meta_path, finder])
+    monkeypatch.setattr(sys, "meta_path", [*sys.meta_path, own_finder, dependency_finder])
     runpy.run_path(str(tmp_path / "python-bootstrap" / "sitecustomize.py"))
     assert str(src) not in sys.path
-    assert finder not in sys.meta_path
+    assert own_finder not in sys.meta_path
+    assert importlib.util.find_spec("unstaged_feature") is None
+    assert dependency_finder in sys.meta_path
+    assert importlib.import_module("editable_dependency_test").value == "installed"
+    sys.modules.pop("editable_dependency_test", None)
 
 
 def test_staged_baseline_uses_committed_value_not_staged_edit(monkeypatch, tmp_path):
@@ -378,7 +404,7 @@ def test_staged_safe_symlink_allowed_and_escaping_symlink_blocked(monkeypatch, t
     assert any("link escapes snapshot" in reason for reason in verdict.reasons)
 
 
-def test_failed_worktree_remove_prunes_metadata(monkeypatch, tmp_path):
+def test_failed_worktree_remove_cleans_only_snapshot(monkeypatch, tmp_path):
     from proofofwork.core import gitdiff
 
     _git(tmp_path, "init", "-q")
@@ -389,25 +415,30 @@ def test_failed_worktree_remove_prunes_metadata(monkeypatch, tmp_path):
     _git(tmp_path, "commit", "-qm", "base")
     (tmp_path / "app.py").write_text("value = 2\n")
     _git(tmp_path, "add", "app.py")
+    unrelated = tmp_path / "unrelated"
+    _git(tmp_path, "worktree", "add", "--detach", str(unrelated), "HEAD")
+    shutil.rmtree(unrelated)  # missing worktree must remain registered, not globally pruned
     monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True))
     original = gitdiff._git
-    commands = []
+    snapshots = []
 
     def remove_fails(root, *args):
         if args[:3] == ("worktree", "remove", "--force"):
-            commands.append(("remove", args[3]))
+            snapshots.append(args[3])
             raise RuntimeError("remove failed")
         if args[:2] == ("worktree", "prune"):
-            commands.append(("prune", args[2:]))
+            raise AssertionError("global prune must never run")
         return original(root, *args)
 
     monkeypatch.setattr(gitdiff, "_git", remove_fails)
     verdict = engine.check(str(tmp_path), staged=True)
     assert not verdict.passed
     assert any("remove failed" in reason for reason in verdict.reasons)
-    assert commands[1] == ("prune", ("--expire", "now"))
-    assert not Path(commands[0][1]).exists()
-    assert _git(tmp_path, "worktree", "list", "--porcelain").count("worktree ") == 1
+    assert len(snapshots) == 1
+    assert not Path(snapshots[0]).exists()
+    listed = _git(tmp_path, "worktree", "list", "--porcelain")
+    assert f"worktree {unrelated.as_posix()}" in listed
+    assert f"worktree {Path(snapshots[0]).as_posix()}" in listed  # failed removal left its metadata
 
 
 def test_staged_mutation_fails_closed_without_touching_worktree(monkeypatch, tmp_path):

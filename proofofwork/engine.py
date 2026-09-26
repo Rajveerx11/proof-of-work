@@ -106,10 +106,6 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                             _git(root, "worktree", "remove", "--force", snapshot)
                         except RuntimeError:
                             shutil.rmtree(snapshot, ignore_errors=True)
-                            try:
-                                _git(root, "worktree", "prune", "--expire", "now")
-                            except RuntimeError:
-                                pass  # preserve the original cleanup failure
                             raise
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
@@ -203,8 +199,16 @@ def _staged_python_env(root: str, snapshot: str, directory: str) -> dict[str, st
         "sys.path[:] = [p for p in sys.path if not ("
         "Path(p).resolve().is_relative_to(source) and "
         "not Path(p).resolve().is_relative_to(prefix))]\n"
+        "def points_to_source(finder):\n"
+        "    module = sys.modules.get(getattr(finder, '__module__', ''))\n"
+        "    if not getattr(module, '__name__', '').startswith('__editable__'):\n"
+        "        return False\n"
+        "    paths = list(getattr(module, 'MAPPING', {}).values())\n"
+        "    paths.extend(p for values in getattr(module, 'NAMESPACES', {}).values() "
+        "for p in values)\n"
+        "    return any(Path(p).resolve().is_relative_to(source) for p in paths)\n"
         "sys.meta_path[:] = [finder for finder in sys.meta_path "
-        "if not getattr(finder, '__module__', '').startswith('__editable__')]\n",
+        "if not points_to_source(finder)]\n",
         encoding="utf-8",
     )
     return {"PYTHONPATH": os.pathsep.join((str(bootstrap), str(Path(snapshot) / "src"), snapshot)),
