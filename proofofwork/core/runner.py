@@ -33,7 +33,8 @@ def run_tests(sandbox: Sandbox, root: str, languages: set[str], *,
                 r.framework for r in (py, js) if r is not None),
                 raw=f"required {missing} test suite unavailable; both language suites required")
         return TestResult(ran=True, passed=py.passed is True and js.passed is True,
-                          coverage=py.coverage, framework=f"{py.framework}+{js.framework}",
+                          coverage=py.coverage, js_coverage=js.coverage,
+                          framework=f"{py.framework}+{js.framework}",
                           raw=f"Python: {py.raw}\nJS/TS: {js.raw}")
     if python:
         return _run_python(sandbox, root, env=python_env) or TestResult(ran=False)

@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
+import os
 import runpy
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 from proofofwork import engine
 from proofofwork.core import detector, runner
@@ -117,6 +121,37 @@ def test_bootstrap_does_not_write_on_other_block_or_existing_bad_baseline(monkey
     baseline.write_text("invalid")
     verdict = engine.check(str(tmp_path), update_baseline=True)
     assert not verdict.passed and baseline.read_text() == "invalid"
+
+
+def test_mixed_coverage_checks_both_suites_against_scalar_baseline(monkeypatch, tmp_path):
+    monkeypatch.setattr("proofofwork.core.gitdiff.collect_diff", lambda *a, **k: Diff())
+    baseline = tmp_path / ".proofofwork" / "baseline.json"
+    baseline.parent.mkdir()
+    baseline.write_text('{"coverage": 90}')
+    for python_coverage, js_coverage, expected in (
+        (90, 10, "coverage-drop"),
+        (70, 95, "coverage-drop"),
+        (90, None, "coverage-incomparable"),
+        (None, 95, "coverage-incomparable"),
+        (90, float("nan"), "coverage-invalid"),
+    ):
+        result = TestResult(ran=True, passed=True, coverage=python_coverage,
+                            js_coverage=js_coverage, framework="pytest+vitest")
+        monkeypatch.setattr(runner, "run_tests", lambda *a, result=result: result)
+        verdict = engine.check(str(tmp_path))
+        assert not verdict.passed
+        assert any(f.rule == expected for f in verdict.findings)
+        assert verdict.tests.coverage == python_coverage
+        if js_coverage is not None and math.isnan(js_coverage):
+            assert math.isnan(verdict.tests.js_coverage)
+        else:
+            assert verdict.tests.js_coverage == js_coverage
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(
+        ran=True, passed=True, coverage=90, js_coverage=95, framework="pytest+vitest"))
+    assert engine.check(str(tmp_path)).passed
+    baseline.unlink()
+    assert engine.check(str(tmp_path), update_baseline=True).passed
+    assert json.loads(baseline.read_text()) == {"coverage": 90}
 
 
 def test_learned_exception_blocks(monkeypatch, tmp_path):
@@ -237,6 +272,48 @@ def test_staged_bootstrap_preserves_unrelated_editable_finder(monkeypatch, tmp_p
     assert dependency_finder in sys.meta_path
     assert importlib.import_module("editable_dependency_test").value == "installed"
     sys.modules.pop("editable_dependency_test", None)
+
+
+def test_staged_bootstrap_removes_own_namespace_hook_and_placeholder(monkeypatch, tmp_path):
+    source = tmp_path / "project"
+    source.mkdir()
+    own = source / "src" / "own_namespace"
+    own.mkdir(parents=True)
+    dependency = tmp_path / "dependency" / "other_namespace"
+    dependency.mkdir(parents=True)
+    (own / "unstaged.py").write_text("value = 'unstaged'\n")
+    bootstrap = engine._staged_python_env(str(source), str(tmp_path / "snapshot"), str(tmp_path))
+
+    def install(name, path):
+        module_name = f"__editable___{name}_finder"
+        module = ModuleType(module_name)
+        module.NAMESPACES = {name: [str(path)]}
+        module.PATH_PLACEHOLDER = f"__editable__.{name}.__path_hook__"
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+        def path_hook(path_entry):
+            if path_entry != module.PATH_PLACEHOLDER:
+                raise ImportError
+            return importlib.machinery.FileFinder(str(path))
+
+        path_hook.__module__ = module_name
+        return module.PATH_PLACEHOLDER, path_hook
+
+    own_placeholder, own_hook = install("own_namespace", own)
+    dep_placeholder, dep_hook = install("other_namespace", dependency)
+    monkeypatch.setattr(sys, "path", [*sys.path, own_placeholder, dep_placeholder])
+    monkeypatch.setattr(sys, "path_hooks", [*sys.path_hooks, own_hook, dep_hook])
+    monkeypatch.setattr(sys, "path_importer_cache", dict(sys.path_importer_cache))
+    sys.path_importer_cache[own_placeholder] = object()
+    sys.path_importer_cache[dep_placeholder] = object()
+    runpy.run_path(str(tmp_path / "python-bootstrap" / "sitecustomize.py"))
+    assert own_placeholder not in sys.path
+    assert own_hook not in sys.path_hooks
+    assert own_placeholder not in sys.path_importer_cache
+    assert dep_placeholder in sys.path
+    assert dep_hook in sys.path_hooks
+    assert dep_placeholder in sys.path_importer_cache
+    assert str(tmp_path / "snapshot" / "src") in bootstrap["PYTHONPATH"]
 
 
 def test_staged_baseline_uses_committed_value_not_staged_edit(monkeypatch, tmp_path):
@@ -364,6 +441,70 @@ def test_staged_js_receives_ignored_dependencies_and_git_context(monkeypatch, tm
     assert "installed, ignored node_modules" in " ".join(verdict.reasons)
 
 
+def test_staged_js_junction_cannot_escape_installed_dependencies(tmp_path):
+    if os.name != "nt":
+        pytest.skip("Windows directory junction regression")
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("node_modules/\n")
+    packages = tmp_path / "node_modules"
+    packages.mkdir()
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    junction = packages / "escape"
+    created = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                             check=False, capture_output=True, text=True)
+    if created.returncode:
+        pytest.skip("junction creation is not supported: " + created.stderr)
+    try:
+        assert not junction.is_symlink()  # junctions are not symlinks on Python 3.11
+        with pytest.raises(ValueError, match="node_modules link escapes"):
+            engine._prepare_staged_dependencies(str(tmp_path), str(tmp_path / "snapshot"), {"js"})
+    finally:
+        junction.rmdir()  # never recursively remove a junction target
+        outside.rmdir()
+
+
+def test_staged_snapshot_junction_cannot_escape(tmp_path):
+    if os.name != "nt":
+        pytest.skip("Windows directory junction regression")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    junction = snapshot / "escape"
+    created = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                             check=False, capture_output=True, text=True)
+    if created.returncode:
+        pytest.skip("junction creation is not supported: " + created.stderr)
+    try:
+        assert not junction.is_symlink()
+        with pytest.raises(ValueError, match="staged snapshot link escapes"):
+            engine._prepare_staged_dependencies(str(tmp_path), str(snapshot), {"python"})
+    finally:
+        junction.rmdir()
+        outside.rmdir()
+
+
+def test_staged_js_package_root_junction_cannot_escape(tmp_path):
+    if os.name != "nt":
+        pytest.skip("Windows directory junction regression")
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("node_modules/\n")
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    junction = tmp_path / "node_modules"
+    created = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                             check=False, capture_output=True, text=True)
+    if created.returncode:
+        pytest.skip("junction creation is not supported: " + created.stderr)
+    try:
+        with pytest.raises(ValueError, match="installed, ignored node_modules"):
+            engine._prepare_staged_dependencies(str(tmp_path), str(tmp_path / "snapshot"), {"js"})
+    finally:
+        junction.rmdir()
+        outside.rmdir()
+
+
 def test_staged_python_only_does_not_require_js_dependencies(monkeypatch, tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -418,6 +559,8 @@ def test_failed_worktree_remove_cleans_only_snapshot(monkeypatch, tmp_path):
     unrelated = tmp_path / "unrelated"
     _git(tmp_path, "worktree", "add", "--detach", str(unrelated), "HEAD")
     shutil.rmtree(unrelated)  # missing worktree must remain registered, not globally pruned
+    before = {line for line in _git(tmp_path, "worktree", "list", "--porcelain").splitlines()
+              if line.startswith("worktree ")}
     monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True))
     original = gitdiff._git
     snapshots = []
@@ -434,11 +577,52 @@ def test_failed_worktree_remove_cleans_only_snapshot(monkeypatch, tmp_path):
     verdict = engine.check(str(tmp_path), staged=True)
     assert not verdict.passed
     assert any("remove failed" in reason for reason in verdict.reasons)
-    assert len(snapshots) == 1
+    assert len(snapshots) == 2  # both targeted attempts failed
+    assert snapshots[0] == snapshots[1]
     assert not Path(snapshots[0]).exists()
-    listed = _git(tmp_path, "worktree", "list", "--porcelain")
-    assert f"worktree {unrelated.as_posix()}" in listed
-    assert f"worktree {Path(snapshots[0]).as_posix()}" in listed  # failed removal left its metadata
+    listed = {line for line in _git(tmp_path, "worktree", "list", "--porcelain").splitlines()
+              if line.startswith("worktree ")}
+    assert before <= listed  # unrelated missing worktree remains registered
+    assert len(listed) == len(before) + 1  # failed removal left snapshot metadata
+
+
+def test_failed_worktree_remove_retry_unregisters_snapshot(monkeypatch, tmp_path):
+    from proofofwork.core import gitdiff
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / "app.py").write_text("value = 2\n")
+    _git(tmp_path, "add", "app.py")
+    unrelated = tmp_path / "unrelated"
+    _git(tmp_path, "worktree", "add", "--detach", str(unrelated), "HEAD")
+    shutil.rmtree(unrelated)
+    before = {line for line in _git(tmp_path, "worktree", "list", "--porcelain").splitlines()
+              if line.startswith("worktree ")}
+    monkeypatch.setattr(runner, "run_tests", lambda *a, **k: TestResult(ran=True, passed=True))
+    original = gitdiff._git
+    snapshots = []
+
+    def fail_once(root, *args):
+        if args[:3] == ("worktree", "remove", "--force"):
+            snapshots.append(args[3])
+            if len(snapshots) == 1:
+                raise RuntimeError("first remove failed")
+            assert not Path(args[3]).exists()
+        if args[:2] == ("worktree", "prune"):
+            raise AssertionError("global prune must never run")
+        return original(root, *args)
+
+    monkeypatch.setattr(gitdiff, "_git", fail_once)
+    verdict = engine.check(str(tmp_path), staged=True)
+    assert verdict.passed, verdict.reasons
+    assert len(snapshots) == 2 and snapshots[0] == snapshots[1]
+    listed = {line for line in _git(tmp_path, "worktree", "list", "--porcelain").splitlines()
+              if line.startswith("worktree ")}
+    assert listed == before  # no stale snapshot; unrelated registration retained
 
 
 def test_staged_mutation_fails_closed_without_touching_worktree(monkeypatch, tmp_path):

@@ -92,6 +92,7 @@ def test_mixed_suites_both_run_without_combining_incomparable_coverage(monkeypat
     assert calls == ["python", "js"]
     assert result.ran and result.passed is False
     assert result.framework == "pytest+vitest" and result.coverage == 90
+    assert result.js_coverage == 75
     monkeypatch.setattr(runner, "_run_js", lambda *args: None)
     missing = run_tests(LocalSandbox(), str(tmp_path), {"python", "ts"})
     assert not missing.ran and "JS/TS test suite unavailable" in missing.raw
@@ -103,7 +104,7 @@ def test_mixed_suites_preserve_python_coverage_for_baseline(monkeypatch, tmp_pat
     monkeypatch.setattr(runner, "_run_js", lambda *a: TestResult(
         ran=True, passed=True, coverage=95, framework="vitest"))
     result = run_tests(LocalSandbox(), str(tmp_path), {"python", "js"})
-    assert result.coverage == 70
+    assert result.coverage == 70 and result.js_coverage == 95
     assert coverage_findings(result, 90)[0].rule == "coverage-drop"
 
 

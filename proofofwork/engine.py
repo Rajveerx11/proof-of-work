@@ -104,9 +104,14 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     finally:
                         try:
                             _git(root, "worktree", "remove", "--force", snapshot)
-                        except RuntimeError:
+                        except RuntimeError as remove_error:
                             shutil.rmtree(snapshot, ignore_errors=True)
-                            raise
+                            # Removing the directory alone leaves a stale Git registration.
+                            # Retry only this worktree; a global prune could remove unrelated ones.
+                            try:
+                                _git(root, "worktree", "remove", "--force", snapshot)
+                            except RuntimeError:
+                                raise remove_error
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
             # Explicit base comparisons trust only the verified base commit, never the
@@ -125,6 +130,26 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     and (coverage_baseline is not None or not update_baseline)):
                 findings.extend(coverage_findings(tests, coverage_baseline,
                                                   threshold=coverage_drop_threshold))
+            if "+" in tests.framework and tests.passed is True:
+                # The scalar baseline is a conservative floor for each measured suite,
+                # never an average that could hide a material drop in either one.
+                if tests.js_coverage is not None and not valid_coverage(tests.js_coverage):
+                    findings.append(Finding("coverage-invalid", Severity.BLOCK,
+                                            "JS/TS coverage must be a finite percentage "
+                                            "between 0 and 100"))
+                if coverage_baseline is not None:
+                    if tests.coverage is None or tests.js_coverage is None:
+                        findings.append(Finding("coverage-incomparable", Severity.BLOCK,
+                                                "both Python and JS/TS coverage are required "
+                                                "to compare mixed suites to the baseline"))
+                    elif (valid_coverage(tests.js_coverage)
+                          and coverage_baseline - tests.js_coverage > coverage_drop_threshold):
+                        findings.append(Finding("coverage-drop", Severity.BLOCK,
+                                                "JS/TS tests pass but coverage fell "
+                                                f"{coverage_baseline - tests.js_coverage:.1f} pts "
+                                                "against the conservative scalar baseline",
+                                                evidence=f"baseline={coverage_baseline} "
+                                                         f"js_current={tests.js_coverage}"))
             if update_baseline:
                 if existing_baseline:
                     raise ValueError("coverage baseline already exists; --update-baseline is bootstrap-only")
@@ -199,16 +224,26 @@ def _staged_python_env(root: str, snapshot: str, directory: str) -> dict[str, st
         "sys.path[:] = [p for p in sys.path if not ("
         "Path(p).resolve().is_relative_to(source) and "
         "not Path(p).resolve().is_relative_to(prefix))]\n"
-        "def points_to_source(finder):\n"
-        "    module = sys.modules.get(getattr(finder, '__module__', ''))\n"
-        "    if not getattr(module, '__name__', '').startswith('__editable__'):\n"
-        "        return False\n"
+        "def maps_source(module):\n"
         "    paths = list(getattr(module, 'MAPPING', {}).values())\n"
         "    paths.extend(p for values in getattr(module, 'NAMESPACES', {}).values() "
         "for p in values)\n"
         "    return any(Path(p).resolve().is_relative_to(source) for p in paths)\n"
+        "def points_to_source(finder):\n"
+        "    module = sys.modules.get(getattr(finder, '__module__', ''))\n"
+        "    return (getattr(module, '__name__', '').startswith('__editable__') "
+        "and maps_source(module))\n"
+        "own_placeholders = {getattr(module, 'PATH_PLACEHOLDER', None) "
+        "for module in list(sys.modules.values()) "
+        "if getattr(module, '__name__', '').startswith('__editable__') "
+        "and maps_source(module)}\n"
+        "own_placeholders.discard(None)\n"
+        "sys.path[:] = [p for p in sys.path if p not in own_placeholders]\n"
+        "for p in own_placeholders: sys.path_importer_cache.pop(p, None)\n"
         "sys.meta_path[:] = [finder for finder in sys.meta_path "
-        "if not points_to_source(finder)]\n",
+        "if not points_to_source(finder)]\n"
+        "sys.path_hooks[:] = [hook for hook in sys.path_hooks "
+        "if not points_to_source(hook)]\n",
         encoding="utf-8",
     )
     return {"PYTHONPATH": os.pathsep.join((str(bootstrap), str(Path(snapshot) / "src"), snapshot)),
@@ -223,12 +258,14 @@ def _prepare_staged_dependencies(root: str, snapshot: str, languages: set[str]) 
     for parent, dirs, files in os.walk(snapshot, followlinks=False):
         for name in (*dirs, *files):
             path = Path(parent) / name
-            if path.is_symlink() and not path.resolve().is_relative_to(snapshot_root):
+            if not path.resolve().is_relative_to(snapshot_root):
                 raise ValueError(f"staged snapshot link escapes snapshot: {path}")
     if not languages.intersection({"js", "ts"}):
         return
     packages = Path(root) / "node_modules"
-    if not packages.is_dir() or packages.is_symlink():
+    if (not packages.is_dir() or packages.is_symlink()
+            or not packages.resolve().is_relative_to(Path(root).resolve())
+            or packages.resolve() == Path(root).resolve()):
         raise ValueError("staged JS tests require installed, ignored node_modules")
     try:
         _git(root, "check-ignore", "--quiet", "--", "node_modules")
@@ -238,7 +275,7 @@ def _prepare_staged_dependencies(root: str, snapshot: str, languages: set[str]) 
     for parent, dirs, files in os.walk(packages, followlinks=False):
         for name in (*dirs, *files):
             path = Path(parent) / name
-            if path.is_symlink() and not path.resolve().is_relative_to(package_root):
+            if not path.resolve().is_relative_to(package_root):
                 raise ValueError(f"node_modules link escapes installed dependencies: {path}")
     shutil.copytree(packages, Path(snapshot) / "node_modules")
 

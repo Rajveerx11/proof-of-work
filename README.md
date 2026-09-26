@@ -132,10 +132,16 @@ or unavailable, or if another gate check fails; it never updates a baseline to a
 a drop. A fresh clone using the hook must bootstrap its own local baseline or receive
 the reviewed committed baseline. Staged tests run in a temporary Git worktree over the
 index content, with ignored `node_modules` copied from the working tree only when
-JS/TS files changed. Mixed Python and JS/TS changes require both suites; their
-coverage percentages are not combined, so coverage comparison is reported as unavailable.
-Install JS/TS dependencies first; missing/non-ignored dependencies, links out of
-`node_modules`, and staged symlinks fail closed. This is local execution of
+JS/TS files changed. Mixed Python and JS/TS changes require both suites. Python
+coverage and JS/TS coverage are kept separate, not averaged: when both are measured,
+each is conservatively compared with the existing scalar baseline. A material drop in
+either blocks. This scalar baseline does not capture independent per-language history,
+so a JS/TS suite with a historically lower coverage percentage may be blocked even
+without a regression. When a trusted baseline exists but either mixed-suite coverage
+is unavailable, `coverage-incomparable` blocks rather than silently skipping a suite.
+Install JS/TS dependencies first; missing/non-ignored dependencies, links or junctions
+out of `node_modules`, and staged links or junctions escaping the snapshot fail closed.
+This is local execution of
 trusted code, not a security sandbox; ignored installed dependencies must be trusted.
 
 The judge (`--judge`) is advisory only: its output is logged as metadata and never changes
