@@ -137,7 +137,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     findings.append(Finding("coverage-invalid", Severity.BLOCK,
                                             "JS/TS coverage must be a finite percentage "
                                             "between 0 and 100"))
-                if coverage_baseline is None and not update_baseline and not existing_baseline and tests.js_coverage is not None:
+                if (coverage_baseline is None and not update_baseline and not existing_baseline
+                        and tests.coverage is None and tests.js_coverage is not None):
                     findings.append(Finding("coverage-baseline-missing", Severity.BLOCK,
                                             "measured JS/TS coverage requires an explicit baseline bootstrap"))
                 if coverage_baseline is not None:

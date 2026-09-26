@@ -5,12 +5,14 @@ import json
 from datetime import UTC, datetime
 
 from proofofwork import __version__
+from proofofwork.core.detector.coverage_delta import valid_coverage
 from proofofwork.types import Severity, Verdict
 
 
 def canonical(obj) -> bytes:
     """Deterministic JSON: sorted keys, no whitespace, ASCII-only. Same bytes every time."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, allow_nan=False).encode()
 
 
 def build_envelope(subject: str, verdict: Verdict) -> dict:
@@ -27,8 +29,10 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
             "tool_version": __version__,
             "ruleset_version": "v1",
             "tests_passed": verdict.tests.passed,
-            "coverage": verdict.tests.coverage,
-            "js_coverage": verdict.tests.js_coverage,
+            "coverage": (verdict.tests.coverage if valid_coverage(verdict.tests.coverage)
+                         else None),
+            "js_coverage": (verdict.tests.js_coverage if valid_coverage(verdict.tests.js_coverage)
+                            else None),
             "timestamp": datetime.now(UTC).isoformat(),
         },
     }

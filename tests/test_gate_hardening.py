@@ -163,6 +163,10 @@ def test_mixed_js_coverage_requires_missing_baseline_bootstrap(monkeypatch, tmp_
     assert any(f.rule == "coverage-baseline-missing" and f.severity == Severity.BLOCK
                for f in verdict.findings)
     assert not engine.check(str(tmp_path), update_baseline=True).passed
+    monkeypatch.setattr(runner, "run_tests", lambda *a: TestResult(
+        ran=True, passed=True, coverage=80, js_coverage=75, framework="pytest+vitest"))
+    verdict = engine.check(str(tmp_path))
+    assert sum(f.rule == "coverage-baseline-missing" for f in verdict.findings) == 1
 
 
 def test_learned_exception_blocks(monkeypatch, tmp_path):
