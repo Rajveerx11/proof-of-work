@@ -33,6 +33,11 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
                          else None),
             "js_coverage": (verdict.tests.js_coverage if valid_coverage(verdict.tests.js_coverage)
                             else None),
+            "coverage_baseline": (verdict.coverage_baseline
+                                  if valid_coverage(verdict.coverage_baseline) else None),
+            "coverage_policy": verdict.coverage_policy,
+            "coverage_status": verdict.coverage_status,
+            "coverage_baseline_source": verdict.coverage_baseline_source,
             "timestamp": datetime.now(UTC).isoformat(),
         },
     }

@@ -70,9 +70,10 @@ def test_missing_baseline_blocks_measured_pass():
 
 
 def test_missing_baseline_without_coverage_is_transparent():
+    # Preserve this regression identity; transparency now includes a required-policy BLOCK.
     findings = coverage_findings(TestResult(ran=True, passed=True), baseline=None)
-    assert findings[0].severity == Severity.INFO
-    assert "coverage unavailable" in findings[0].message
+    assert findings[0].severity == Severity.BLOCK
+    assert findings[0].rule == "coverage-unavailable"
 
 
 def test_mixed_suites_both_run_without_combining_incomparable_coverage(monkeypatch, tmp_path):

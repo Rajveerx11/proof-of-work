@@ -36,6 +36,7 @@ Issues = "https://github.com/Rajveerx11/proof-of-work/issues"
 judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-key
 dev = [
     "pytest>=8",
+    "coverage==7.13.5",
     "ruff==0.16.8",
 ]
 
