@@ -6,6 +6,7 @@ import os
 import shutil
 import stat
 import subprocess
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -58,6 +59,24 @@ def node_repo(repo):
     return repo
 
 
+@pytest.fixture
+def nested_node_repo(node_repo):
+    entries = []
+    (node_repo / "check.cjs").unlink()  # No root-level fallback for package-relative paths.
+    for sid, cwd in (("first", "packages/first"), ("second", "components/nested/second")):
+        package = node_repo / cwd
+        package.mkdir(parents=True)
+        (package / "input.txt").write_text(sid, encoding="utf-8")
+        (package / "check.cjs").write_text(
+            "const assert = require('node:assert/strict');\n"
+            f"assert.equal(require('fs').readFileSync('input.txt', 'utf8'), '{sid}');\n"
+            f"console.log('package {sid}');\n", encoding="utf-8")
+        entries.append(suite(sid, cwd=cwd, prerequisites=["check.cjs", "input.txt"]))
+    write_config(node_repo, entries)
+    commit(node_repo)
+    return node_repo
+
+
 def check(root, **kwargs):
     return engine.check(str(root), suite_base=kwargs.pop("suite_base", "HEAD"), **kwargs)
 
@@ -77,6 +96,81 @@ def test_all_suites_run_for_config_only_changes_and_cli(node_repo, capsys):
     assert "real node suite" in result["raw"]
     assert "not full candidate attestation" in " ".join(verdict["reasons"])
     assert result["coverage"] is None and verdict["entry_hash"]
+
+
+@pytest.mark.parametrize("entrypoint", ["engine", "cli"])
+@pytest.mark.parametrize("missing_package", [None, "first", "second"])
+def test_nested_package_cwds_and_relative_prerequisites(
+        nested_node_repo, capsys, entrypoint, missing_package):
+    root = nested_node_repo
+    base, entries = suites.load_suites(str(root), "HEAD")
+    if missing_package:
+        entry = next(item for item in entries if item["id"] == missing_package)
+        (root / entry["cwd"] / "input.txt").unlink()
+    if entrypoint == "cli":
+        code = main(["check", "--root", str(root), "--suite-base", base, "--json"])
+        verdict = json.loads(capsys.readouterr().out)
+        assert code == (1 if missing_package else 0)
+        passed, result = verdict["passed"], verdict["tests"]
+    else:
+        verdict = check(root, suite_base=base)
+        passed, result = verdict.passed, asdict(verdict.tests)
+    assert passed == (missing_package is None)
+    assert result["required_suites"] == ["first", "second"]
+    assert result["executed_suites"] == [sid for sid in ["first", "second"]
+                                         if sid != missing_package]
+    for outcome in result["suites"]:
+        if outcome["id"] == missing_package:
+            assert outcome["outcome"] == "unavailable" and outcome["exit_code"] is None
+            assert "missing prerequisite: input.txt" in outcome["raw"]
+        else:
+            assert outcome["outcome"] == "passed" and outcome["exit_code"] == 0
+            assert f"package {outcome['id']}" in outcome["raw"]
+
+
+@pytest.mark.parametrize("entrypoint", ["engine", "cli"])
+def test_staged_nested_packages_use_index_and_preserve_source(
+        nested_node_repo, capsys, entrypoint):
+    root = nested_node_repo
+    base, entries = suites.load_suites(str(root), "HEAD")
+    for entry in entries:
+        package = root / entry["cwd"]
+        script = package / "check.cjs"
+        script.write_text(script.read_text().replace(entry["id"], f"index {entry['id']}"),
+                          encoding="utf-8")
+        data = package / "input.txt"
+        data.write_text(f"index {entry['id']}", encoding="utf-8")
+        git(root, "add", entry["cwd"])
+        data.write_text(f"worktree {entry['id']}", encoding="utf-8")
+    sentinel = root / "untracked.txt"
+    sentinel.write_text("preserve source workspace", encoding="utf-8")
+    source_before = {name: (root / name).read_bytes()
+                     for name in [*git(root, "ls-files").splitlines(), sentinel.name]}
+    status_before = git(root, "status", "--porcelain")
+    index_path = root / git(root, "rev-parse", "--git-path", "index")
+    index_before = index_path.read_bytes()
+    trees_before = git(root, "worktree", "list", "--porcelain")
+    if entrypoint == "cli":
+        assert main(["check", "--root", str(root), "--suite-base", base,
+                     "--staged", "--json"]) == 0
+        verdict = json.loads(capsys.readouterr().out)
+        assert verdict["passed"]
+        result = verdict["tests"]
+    else:
+        verdict = check(root, suite_base=base, staged=True)
+        assert verdict.passed
+        result = asdict(verdict.tests)
+    assert result["required_suites"] == result["executed_suites"] == ["first", "second"]
+    assert [item["outcome"] for item in result["suites"]] == ["passed", "passed"]
+    assert [item["exit_code"] for item in result["suites"]] == [0, 0]
+    assert all(f"package index {sid}" in result["raw"] for sid in ["first", "second"])
+    assert all((root / name).read_bytes() == content for name, content in source_before.items())
+    assert git(root, "status", "--porcelain") == status_before
+    assert index_path.read_bytes() == index_before
+    assert git(root, "worktree", "list", "--porcelain") == trees_before
+    worktree_verdict = check(root, suite_base=base)
+    assert not worktree_verdict.passed
+    assert [item["outcome"] for item in worktree_verdict.tests.suites] == ["failed", "failed"]
 
 
 def test_failure_does_not_skip_other_required_suites(node_repo, capsys):
@@ -307,7 +401,11 @@ def test_reference_resolved_once(repo, monkeypatch):
 
 def test_tool_resolution_passes_absolute_path_to_sandbox(node_repo, monkeypatch):
     actual = Path(shutil.which("node")).resolve()
+    # The runner checkout and external Node may be on different Windows drives.
+    # Relative tool lookup must start outside both controlled roots on Node's drive.
+    monkeypatch.chdir(actual.parent)
     relative = os.path.relpath(actual, Path.cwd())
+    assert not Path(relative).is_absolute() and Path(relative).resolve() == actual
     monkeypatch.setattr(suites.shutil, "which", lambda tool: relative)
     calls = []
 
@@ -386,9 +484,13 @@ def directory_link(link, target):
 
 
 @pytest.mark.parametrize("location", ["candidate", "source"])
-@pytest.mark.parametrize("path_form", ["absolute", "relative", "mixed-case"])
+@pytest.mark.parametrize("path_form,invocation_cwd", [
+    ("absolute", "runner"), ("absolute", "candidate"),
+    ("relative", "runner"),
+    ("mixed-case", "runner"), ("mixed-case", "candidate"),
+])
 def test_real_node_lookup_through_controlled_directory_link_is_rejected(
-        node_repo, tmp_path_factory, monkeypatch, location, path_form):
+        node_repo, tmp_path_factory, monkeypatch, location, path_form, invocation_cwd):
     if path_form == "mixed-case" and os.name != "nt":
         pytest.skip("case-insensitive PATH lookup is Windows-specific")
     source = tmp_path_factory.mktemp("source")
@@ -396,9 +498,16 @@ def test_real_node_lookup_through_controlled_directory_link_is_rejected(
     external_node = Path(shutil.which("node")).resolve()
     link = controlled / "tools"
     directory_link(link, external_node.parent)
+    if invocation_cwd == "candidate":
+        monkeypatch.chdir(node_repo)
     path_entry = str(link)
     if path_form == "relative":
+        # Anchor to the fixture drive, not the (potentially cross-drive) checkout.
+        # Keep cwd outside the controlled tree so fallback PATH remains trusted.
+        monkeypatch.chdir(controlled.parent)
         path_entry = os.path.relpath(link, Path.cwd())
+        assert not Path(path_entry).is_absolute()
+        assert Path(os.path.abspath(path_entry)) == link
     elif path_form == "mixed-case":
         path_entry = path_entry.swapcase()
     original_path = os.environ["PATH"]
