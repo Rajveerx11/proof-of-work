@@ -17,6 +17,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
     verdict = engine.check(
         root=args.root,
         base_ref=args.base,
+        suite_base=args.suite_base,
         staged=args.staged,
         run_tests=not args.no_tests,
         run_mutation=args.mutation,
@@ -317,6 +318,8 @@ def _build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("check", help="run the gate on a changeset")
     c.add_argument("--root", default=".")
     c.add_argument("--base", default="HEAD")
+    c.add_argument("--suite-base", default=None,
+                   help="explicit reviewed ref for .proofofwork/suites.json (commit-pinned)")
     c.add_argument("--staged", action="store_true")
     c.add_argument("--no-tests", action="store_true", help="skip re-running the suite")
     c.add_argument("--mutation", action="store_true")

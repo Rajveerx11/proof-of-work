@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .types import Finding, MutationResult, Severity, TestResult, Verdict
@@ -35,7 +36,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           run_tests: bool = True, run_mutation: bool = False, use_judge: bool = False,
           update_baseline: bool = False, db_path: str | None = None,
           coverage_drop_threshold: float = 2.0,
-          extra_findings: list[Finding] | None = None) -> Verdict:
+          extra_findings: list[Finding] | None = None,
+          suite_base: str | None = None) -> Verdict:
     """Run the full gate against a changeset and return a fact-based Verdict."""
     from .core.detector import ALL_CHECKS
     from .core.gitdiff import _git, collect_diff
@@ -74,10 +76,39 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
 
     tests = TestResult()
     coverage_baseline: float | None = None
+    configured = suite_base is not None
+    try:
+        from .core.suites import configured_mode
+        configured = configured or configured_mode(
+            root, staged=staged,
+            changed_paths=[path for f in diff.files for path in (f.path, f.old_path) if path])
+    except Exception as exc:  # noqa: BLE001 - config discovery failures cannot select fallback
+        configured = True
+        findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
+    if configured:
+        tests = TestResult(framework="configured", evidence="exit-code")
+        try:
+            from .core.suites import check_coverage_policy, load_suites
+            if not suite_base:
+                raise ValueError("configured suites require explicit --suite-base REF")
+            commit, suites = load_suites(root, suite_base)
+            tests.suite_base = commit
+            tests.required_suites = [suite["id"] for suite in suites]
+            check_coverage_policy(root, commit, base_ref=base_ref, staged=staged,
+                                  update_baseline=update_baseline)
+            if not run_tests:
+                raise ValueError("all configured suites are required; --no-tests is unsupported")
+            tests = _run_configured_tests(root, suites, commit, staged=staged)
+            findings.append(Finding(
+                "configured-evidence-scope", Severity.INFO,
+                "reviewed commands provide exit-code test-execution evidence only; "
+                "coverage and whole-candidate/launcher attestation are unsupported"))
+        except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - fail closed
+            findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
     if update_baseline and not run_tests:
         findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK,
                                 "--update-baseline requires a successful test run"))
-    if run_tests:
+    if run_tests and not configured:
         from .core.detector.coverage_delta import (
             baseline_exists,
             baseline_path,
@@ -91,27 +122,12 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
 
         try:
             if staged:
-                with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as directory:
-                    snapshot = os.path.join(directory, "tree")
-                    _git(root, "worktree", "add", "--detach", "--no-checkout", snapshot, "HEAD")
-                    try:
-                        _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
-                        _prepare_staged_dependencies(root, snapshot, diff.languages())
-                        python_env = (_staged_python_env(root, snapshot, directory)
-                                      if "python" in diff.languages() else None)
-                        tests = _run(get_sandbox("local"), snapshot, diff.languages(),
-                                     **({"python_env": python_env} if python_env else {}))
-                    finally:
-                        try:
-                            _git(root, "worktree", "remove", "--force", snapshot)
-                        except RuntimeError as remove_error:
-                            shutil.rmtree(snapshot, ignore_errors=True)
-                            # Removing the directory alone leaves a stale Git registration.
-                            # Retry only this worktree; a global prune could remove unrelated ones.
-                            try:
-                                _git(root, "worktree", "remove", "--force", snapshot)
-                            except RuntimeError:
-                                raise remove_error
+                with _index_snapshot(root) as (snapshot, directory):
+                    _prepare_staged_dependencies(root, snapshot, diff.languages())
+                    python_env = (_staged_python_env(root, snapshot, directory)
+                                  if "python" in diff.languages() else None)
+                    tests = _run(get_sandbox("local"), snapshot, diff.languages(),
+                                 **({"python_env": python_env} if python_env else {}))
             else:
                 tests = _run(get_sandbox("local"), root, diff.languages())
             # Explicit base comparisons trust only the verified base commit, never the
@@ -217,6 +233,44 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     return verdict
 
 
+def _run_configured_tests(root: str, suites: list[dict], commit: str, *,
+                          staged: bool) -> TestResult:
+    from .core.sandbox import get_sandbox
+    from .core.suites import run_suites
+
+    if not staged:
+        return run_suites(get_sandbox("local"), root, suites, commit, source_root=root)
+    with _index_snapshot(root) as (snapshot, directory):
+        # Validate links, but do not require/copy a root node_modules for arbitrary
+        # commands. Their explicit prerequisites must exist in the index.
+        _prepare_staged_dependencies(root, snapshot, set())
+        env = _staged_python_env(root, snapshot, directory)
+        return run_suites(get_sandbox("local"), snapshot, suites, commit,
+                          source_root=root, env=env)
+
+
+@contextmanager
+def _index_snapshot(root: str):
+    """Materialize the caller's index without changing it; clean only our worktree."""
+    from .core.gitdiff import _git
+
+    with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as directory:
+        snapshot = os.path.join(directory, "tree")
+        _git(root, "worktree", "add", "--detach", "--no-checkout", snapshot, "HEAD")
+        try:
+            _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
+            yield snapshot, directory
+        finally:
+            try:
+                _git(root, "worktree", "remove", "--force", snapshot)
+            except RuntimeError as remove_error:
+                shutil.rmtree(snapshot, ignore_errors=True)
+                try:
+                    _git(root, "worktree", "remove", "--force", snapshot)
+                except RuntimeError:
+                    raise remove_error
+
+
 def _staged_python_env(root: str, snapshot: str, directory: str) -> dict[str, str]:
     """Prefer the index tree and discard inherited worktree/editable import paths."""
     bootstrap = Path(directory) / "python-bootstrap"
@@ -304,6 +358,9 @@ def _decide(findings: list[Finding], tests: TestResult, *,
     passed = not blocked and not tests_failed and not tests_missing
     if passed and not require_tests:
         reasons.append("detector-only: tests were not run; no test pass claimed")
+    if passed and tests.framework == "configured":
+        reasons.append("all required configured suites passed (exit-code evidence only; "
+                       "not full candidate attestation)")
     if passed and not reasons:
         if any(f.rule == "coverage-baseline-missing" for f in findings):
             reasons.append("tests passed; coverage baseline unavailable (coverage not enforced)")
