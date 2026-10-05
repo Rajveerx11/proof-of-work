@@ -20,6 +20,13 @@ jobs:
       # not just scan the diff. (uv sync, not --system: the runner's system
       # Python is PEP-668 externally-managed.)
       - name: Install (with dev extra)
-        run: uv sync --extra dev
-      - name: Gate this PR's diff against its base
-        run: uv run proof-of-work check --base "${{ github.event.pull_request.base.sha }}"
+        run: uv sync --frozen --extra dev
+      - name: Real CLI coverage comparison (positive and negative regression)
+        run: uv run --frozen pytest -q tests/test_coverage_policy.py -k actual_cli
+      # Explicit initial adoption: when base has no baseline, measure that immutable
+      # commit in an owned worktree. Never fall back for an invalid/legacy baseline,
+      # and never use a baseline proposed by this PR.
+      - name: Gate this PR's diff against its frozen base with required coverage
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: uv run --frozen proof-of-work check --base "$PR_BASE_SHA" --measure-base-coverage --json

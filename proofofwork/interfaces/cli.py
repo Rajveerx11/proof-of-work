@@ -22,6 +22,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
         run_mutation=args.mutation,
         use_judge=args.judge,
         update_baseline=args.update_baseline,
+        coverage_policy=args.coverage_policy,
+        measure_base_coverage=args.measure_base_coverage,
         db_path=args.db,
     )
 
@@ -322,6 +324,10 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--mutation", action="store_true")
     c.add_argument("--judge", action="store_true", help="add advisory LLM hints (BYO key)")
     c.add_argument("--update-baseline", action="store_true")
+    c.add_argument("--coverage-policy", choices=("required", "test-only"), default="required",
+                   help="test-only is an explicit trusted opt-out, not verified coverage")
+    c.add_argument("--measure-base-coverage", action="store_true",
+                   help="explicitly measure frozen base ONLY when its baseline is absent")
     c.add_argument("--db", default=None)
     c.add_argument("--json", action="store_true")
     c.set_defaults(func=_cmd_check)

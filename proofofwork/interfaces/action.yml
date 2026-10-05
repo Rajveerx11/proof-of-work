@@ -1,6 +1,14 @@
 name: "Proof-of-Work"
 description: "Re-check an AI agent's work against facts: real tests, diff tampering, coverage."
 inputs:
+  coverage-policy:
+    description: "required (default), or explicit trusted test-only opt-out (not coverage verified)."
+    required: false
+    default: "required"
+  measure-base-coverage:
+    description: "Explicitly measure a frozen base ONLY if no trusted baseline exists."
+    required: false
+    default: "false"
   mutation:
     description: "Also run mutation testing (slower)."
     required: false
@@ -21,6 +29,8 @@ runs:
       env:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PUSH_BASE_SHA: ${{ github.event.before }}
+        COVERAGE_POLICY: ${{ inputs.coverage-policy }}
+        MEASURE_BASE_COVERAGE: ${{ inputs.measure-base-coverage }}
       run: |
         case "$GITHUB_EVENT_NAME" in
           pull_request) base="$PR_BASE_SHA" ;;
@@ -43,4 +53,7 @@ runs:
         fi
         flags=""
         if [ "${{ inputs.mutation }}" = "true" ]; then flags="--mutation"; fi
-        proof-of-work check --base "$base" $flags
+        if [ "$MEASURE_BASE_COVERAGE" = "true" ]; then
+          flags="$flags --measure-base-coverage"
+        fi
+        proof-of-work check --base "$base" --coverage-policy "$COVERAGE_POLICY" $flags

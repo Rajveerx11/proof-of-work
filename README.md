@@ -105,44 +105,32 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
 Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
 `--json`, `--judge`, `--db <path>`.
 
-Coverage bootstrap is explicit and one-time: after installing test dependencies, run
-`proof-of-work check --update-baseline` for ordinary checks, or
-`proof-of-work check --staged --update-baseline` for the pre-commit hook. The latter
-writes the measured baseline to Git's local metadata (`git rev-parse --git-path
-proofofwork/baseline.json`), not the ignored working tree or index. It persists across
-commits in that local repository but is **not shared by clones or CI**. To share a
-trusted baseline, copy the local metadata baseline into the ignored worktree path,
-then force-add and review it before committing:
+Coverage is now **required by default** for Python-only, JS/TS-only and mixed
+checks: missing instrumentation, stale/malformed/empty reports and incomparable
+baselines block a passing test exit. See [coverage policy and migration](docs/coverage-policy.md)
+for the metric, reviewed pinned tooling, trusted test-only opt-out and security limits.
 
-```bash
-mkdir -p .proofofwork
-cp "$(git rev-parse --git-path proofofwork/baseline.json)" .proofofwork/baseline.json
-git add -f .proofofwork/baseline.json
-```
+Baseline bootstrap is explicit and one-time: on a reviewed tree without a baseline,
+run `proof-of-work check --update-baseline`, then review and force-add
+`.proofofwork/baseline.json`. Staged bootstrap writes Git metadata instead; copy it
+into that tracked path before review/commit. Neither local file nor Git metadata
+can authorize subsequent checks until reviewed into the trusted base commit.
+All checks (including default `HEAD`) trust the frozen committed baseline, never
+candidate worktree/index baseline edits. Legacy scalar-only files need an explicit
+reviewed migration to the new line metric and language identity.
 
-Staged checks prioritize the committed HEAD value over local metadata (so the new
-baseline is trusted only after the reviewed commit). Ordinary `--base <ref>` checks
-(including CI) use the baseline in the verified base commit, never the candidate's
-working-tree or newly committed baseline. If the base has no baseline, a candidate's
-first proposed baseline is **not** silently trusted: measured coverage blocks with
-`coverage-baseline-missing` until a baseline is explicitly bootstrapped locally and
-reviewed into the base branch. Ordinary local checks without `--base` still use the
-local baseline. Bootstrap fails if any baseline already exists, if coverage is invalid
-or unavailable, or if another gate check fails; it never updates a baseline to accept
-a drop. A fresh clone using the hook must bootstrap its own local baseline or receive
-the reviewed committed baseline. Staged tests run in a temporary Git worktree over the
-index content, with ignored `node_modules` copied from the working tree only when
-JS/TS files changed. Mixed Python and JS/TS changes require both suites. Python
-coverage and JS/TS coverage are kept separate, not averaged: when both are measured,
-each is conservatively compared with the existing scalar baseline. A material drop in
-either blocks. This scalar baseline does not capture independent per-language history,
-so a JS/TS suite with a historically lower coverage percentage may be blocked even
-without a regression. When a trusted baseline exists but either mixed-suite coverage
-is unavailable, `coverage-incomparable` blocks rather than silently skipping a suite.
-Install JS/TS dependencies first; missing/non-ignored dependencies, links or junctions
-out of `node_modules`, and staged links or junctions escaping the snapshot fail closed.
-This is local execution of
-trusted code, not a security sandbox; ignored installed dependencies must be trusted.
+For initial CI adoption with **no** base baseline, opt in to
+`--measure-base-coverage`: measure the immutable base in an owned worktree and
+compare fresh candidate coverage. It never falls back around an existing invalid
+or incomparable baseline and does not write a proposed baseline. The default drop
+allowance remains 2 points. Mixed suites use one conservative scalar floor for both
+measurements, not an average or independent per-suite history.
+
+A trusted launcher may explicitly use `--coverage-policy test-only` for exit-only
+projects; reasons, JSON and signed evidence label coverage **NOT verified**.
+Staged tests run against the index snapshot. Installed, ignored JS dependencies
+are copied only when needed; escaping links/junctions fail closed. This is local
+execution of trusted code, not a hostile-code security sandbox.
 
 The judge (`--judge`) is advisory only: its output is logged as metadata and never changes
 the verdict. Set `ANTHROPIC_API_KEY` and install the extra

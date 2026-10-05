@@ -88,6 +88,9 @@ class Verdict:
     coverage_baseline: float | None = None
     judge: dict | None = None          # advisory metadata ONLY — never decides `passed`
     entry_hash: str = ""               # tamper-evident log row hash
+    coverage_policy: str = "required"
+    coverage_status: str = "not-run"
+    coverage_baseline_source: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -99,4 +102,7 @@ class Verdict:
             "coverage_baseline": self.coverage_baseline,
             "judge": self.judge,
             "entry_hash": self.entry_hash,
+            "coverage_policy": self.coverage_policy,
+            "coverage_status": self.coverage_status,
+            "coverage_baseline_source": self.coverage_baseline_source,
         }
