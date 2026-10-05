@@ -102,8 +102,14 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
       mutation: "false"   # optional: also run mutation testing (slower)
   ```
 
-Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
-`--json`, `--judge`, `--db <path>`.
+Flags: `--staged`, `--base <ref>`, `--suite-base <reviewed-ref>`, `--no-tests`,
+`--mutation`, `--update-baseline`, `--json`, `--judge`, `--db <path>`.
+
+The source-tree CLI/API also supports [reviewed configured suites](docs/configured-suites.md)
+for custom commands and multiple package roots. This bounded mode requires an explicit
+`--suite-base`, runs every required suite, and reports exit-code execution evidence,
+not full candidate attestation. Coverage baselines and bootstrap are unsupported and
+fail closed; the following coverage behavior describes the legacy unconfigured runner.
 
 Coverage bootstrap is explicit and one-time: after installing test dependencies, run
 `proof-of-work check --update-baseline` for ordinary checks, or

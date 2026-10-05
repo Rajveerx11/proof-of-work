@@ -68,6 +68,11 @@ class TestResult:
     js_coverage: float | None = None   # separate JS/TS percentage in mixed suites
     framework: str = ""                # pytest | vitest | jest
     raw: str = ""                      # captured tail, for debugging
+    suite_base: str = ""               # immutable reviewed config commit (configured mode)
+    evidence: str = ""                 # exit-code only; not whole-candidate attestation
+    required_suites: list[str] = field(default_factory=list)
+    executed_suites: list[str] = field(default_factory=list)
+    suites: list[dict] = field(default_factory=list)  # id, outcome, exit_code, raw
 
 
 @dataclass
