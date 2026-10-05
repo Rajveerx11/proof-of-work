@@ -87,7 +87,7 @@ def test_all_suites_run_for_config_only_changes_and_cli(node_repo, capsys):
     write_config(node_repo, [suite("substitute", argv=["node", "-e", "process.exit(9)"])])
     code = main(["check", "--root", str(node_repo), "--suite-base", base, "--json"])
     verdict = json.loads(capsys.readouterr().out)
-    assert code == 0 and verdict["passed"]
+    assert code == 0 and verdict["passed"], (verdict["reasons"], verdict["tests"])
     result = verdict["tests"]
     assert result["suite_base"] == base and result["evidence"] == "exit-code"
     assert result["required_suites"] == result["executed_suites"] == ["first", "second"]
