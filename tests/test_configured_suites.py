@@ -87,7 +87,7 @@ def test_all_suites_run_for_config_only_changes_and_cli(node_repo, capsys):
     write_config(node_repo, [suite("substitute", argv=["node", "-e", "process.exit(9)"])])
     code = main(["check", "--root", str(node_repo), "--suite-base", base, "--json"])
     verdict = json.loads(capsys.readouterr().out)
-    assert code == 0 and verdict["passed"], (verdict["reasons"], verdict["tests"])
+    assert code == 0 and verdict["passed"], f"{verdict['reasons']}\n{verdict['tests']['raw']}"
     result = verdict["tests"]
     assert result["suite_base"] == base and result["evidence"] == "exit-code"
     assert result["required_suites"] == result["executed_suites"] == ["first", "second"]
@@ -115,7 +115,7 @@ def test_nested_package_cwds_and_relative_prerequisites(
     else:
         verdict = check(root, suite_base=base)
         passed, result = verdict.passed, asdict(verdict.tests)
-    assert passed == (missing_package is None)
+    assert passed == (missing_package is None), result["raw"]
     assert result["required_suites"] == ["first", "second"]
     assert result["executed_suites"] == [sid for sid in ["first", "second"]
                                          if sid != missing_package]
