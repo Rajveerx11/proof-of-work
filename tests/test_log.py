@@ -72,3 +72,27 @@ def test_empty_db_true(tmp_path):
     conn.commit()
     conn.close()
     assert verify_chain(db) is True
+
+
+def test_legacy_policyless_envelope_and_new_policy_both_verify(tmp_path):
+    db = str(tmp_path / "log.db")
+    legacy = build_envelope("a" * 64, _verdict(True))
+    del legacy["predicate"]["integrity_policy"]
+    record(legacy, db)
+    strict = _verdict(True)
+    strict.integrity_policy = "strict-v1"
+    record(build_envelope("b" * 64, strict), db)
+    assert verify_chain(db)
+
+
+def test_tampering_signed_integrity_policy_breaks_verification(tmp_path):
+    db = str(tmp_path / "log.db")
+    strict = _verdict(True)
+    strict.integrity_policy = "strict-v1"
+    envelope = build_envelope("a" * 64, strict)
+    record(envelope, db)
+    assert verify_chain(db)
+    envelope["predicate"]["integrity_policy"] = "advisory-v1"
+    with sqlite3.connect(db) as connection:
+        connection.execute("UPDATE entries SET envelope_json=?", (canonical(envelope).decode(),))
+    assert not verify_chain(db)

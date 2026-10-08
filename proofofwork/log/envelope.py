@@ -28,6 +28,7 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
             ],
             "tool_version": __version__,
             "ruleset_version": "v1",
+            "integrity_policy": verdict.integrity_policy,
             "tests_passed": verdict.tests.passed,
             "coverage": (verdict.tests.coverage if valid_coverage(verdict.tests.coverage)
                          else None),

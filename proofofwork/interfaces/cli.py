@@ -23,6 +23,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         use_judge=args.judge,
         update_baseline=args.update_baseline,
         db_path=args.db,
+        strict_integrity=args.strict_integrity,
     )
 
     if args.json:
@@ -319,6 +320,8 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--base", default="HEAD")
     c.add_argument("--staged", action="store_true")
     c.add_argument("--no-tests", action="store_true", help="skip re-running the suite")
+    c.add_argument("--strict-integrity", action="store_true",
+                   help="block high-risk test skip/removal findings (no human override)")
     c.add_argument("--mutation", action="store_true")
     c.add_argument("--judge", action="store_true", help="add advisory LLM hints (BYO key)")
     c.add_argument("--update-baseline", action="store_true")

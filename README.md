@@ -103,7 +103,52 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
   ```
 
 Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
-`--json`, `--judge`, `--db <path>`.
+`--json`, `--judge`, `--db <path>`, `--strict-integrity`.
+
+### Strict test-integrity policy
+
+The default remains advisory for integrity warnings. For a blocking gate, use
+`proof-of-work check --strict-integrity`; the Action input is
+`strict-integrity: "true"` (default `"false"`, accepted values are only `"true"`/`"false"`).
+Pin an Action revision containing this feature; the existing v0.2.0 tag predates it.
+Set the flag/input in trusted CI or caller configuration, not files controlled by the
+candidate changeset. There is no candidate-tree policy file and no human-override API.
+Turning strict mode off is an advisory run, **not** a recorded override or a strict PASS.
+
+Strict mode promotes only `added-skip`, `removed-assert`, `removed-test-fn`, and
+`test-path-removed` from WARN to BLOCK, even when re-run tests pass. The CLI/Action then
+fails with exit code 1; JSON retains the rule and blocking severity, and the signed log
+records a failing verdict with the rule ID. JSON and the signed envelope predicate include
+`integrity_policy`: `strict-v1` or `advisory-v1`, including on PASS. Legacy envelopes
+without this field still verify but do not attest strict enforcement. Other WARNs
+(including a discovery-compatible rename) remain reviewable without becoming blockers.
+
+Both source and destination paths classify Git renames/copies as test-related, including
+C-quoted paths with tabs, newlines, quotes, and Unicode. `test-path-removed` uses narrower
+known default discovery semantics: Python `test_*.py`/`*_test.py` outside pytest's
+hidden/default-excluded directories (including `dist`, `build`, and `node_modules`),
+JS/TS `.test`/`.spec` filenames (including Vitest's `mjs`/`cjs`/`mts`/`cts` variants
+and JSX/TSX extensions), or Jest's `__tests__` directory, excluding JS/TS paths
+inside `node_modules`. Losing these semantics emits the finding even
+within `tests/` or with unchanged content; test-related helpers without known discovery
+semantics do not trigger it. Compatible moves with preserved assertions/functions only
+emit `renamed-test` WARN. These defaults do not establish configured collection: notably,
+Vitest does not collect arbitrary `__tests__` helpers by default.
+Copies do not imply deletion of the intact source test; their complete destination
+content is checked as additions, including exact copies with no Git patch hunks.
+Python skip markers (including module-level `pytestmark`, `pytest.xfail`, and
+`self.skipTest`) and JS/TS `test.only` are checked without matching strings/comments
+or unrelated objects' calls. Real Git checks use full candidate lexical context and
+added-line coordinates; staged checks use only the index, not dirty unstaged text.
+Stored partial patches retain best-effort fragment analysis. Aliases, shadowed bindings,
+JS template interpolations, and unsupported syntax are not resolved.
+
+These are diff/path/lexical heuristics, **not proof of cheating** or proof of test discovery.
+Custom test collection, helper moves, deliberate assertion consolidation, and intentional
+skips can trigger review findings; dynamically generated tests and unsupported framework
+syntax can escape these checks. Review the discovery/configuration and changed semantics,
+then restore recognized test paths/verification or explicitly choose advisory enforcement.
+No automatic human approval or claim of fully verified override is made.
 
 Coverage bootstrap is explicit and one-time: after installing test dependencies, run
 `proof-of-work check --update-baseline` for ordinary checks, or

@@ -32,12 +32,17 @@ class Finding:
 @dataclass
 class DiffFile:
     path: str
-    status: str                        # "A" added | "M" modified | "D" deleted | "R" renamed
-    old_path: str = ""                 # populated for renames
+    status: str                        # A added | M modified | D deleted | R renamed | C copied
+    old_path: str = ""                 # populated for renames/copies
     added: list[str] = field(default_factory=list)     # added source lines (text, no +)
     removed: list[str] = field(default_factory=list)    # removed source lines (text, no -)
     is_test: bool = False
     language: str = ""                 # "python" | "js" | "ts" | ""
+    old_language: str = ""             # source language for renames/copies
+    # Real Git snapshots supply full lexical context and 1-based added-line provenance.
+    # Hand-built/corpus diffs may omit context; detectors retain their partial-diff fallback.
+    candidate_lines: list[str] | None = None
+    added_line_numbers: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +93,7 @@ class Verdict:
     coverage_baseline: float | None = None
     judge: dict | None = None          # advisory metadata ONLY — never decides `passed`
     entry_hash: str = ""               # tamper-evident log row hash
+    integrity_policy: str = "advisory-v1"  # trusted caller's enforced integrity policy
 
     def as_dict(self) -> dict:
         return {
@@ -99,4 +105,5 @@ class Verdict:
             "coverage_baseline": self.coverage_baseline,
             "judge": self.judge,
             "entry_hash": self.entry_hash,
+            "integrity_policy": self.integrity_policy,
         }
