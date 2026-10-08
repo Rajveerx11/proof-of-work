@@ -150,6 +150,23 @@ def test_quoted_patch_paths_and_header_like_source_lines():
     'const re = /"/;', "const re = /'/;", 'const re = /["\\\']/;',
     'function pattern() { return /"/; }',
     'const quotient = left / right;',
+    'if (true) {} /"/.test("");',
+    'if (true) { if (false) {} } /"/.test("");',
+    'if (true) {} /* block end */ /["\\/]/.test("");',
+    'if (true) /"/.test("");',
+    'while (false) {} /"/.test("");',
+    'for (; false;) {} /"/.test("");',
+    'try {} finally {} /"/.test("");',
+    'try {} catch {} /"/.test("");',
+    'label: {} /"/.test("");',
+    'switch (1) { case true ? 1 : 2: {} /"/.test(""); }',
+    'switch (1) { default: {} /"/.test(""); }',
+    'function pattern() {} /"/.test("");',
+    'async function pattern() {} /"/.test("");',
+    'class Pattern {} /"/.test("");',
+    'const n = 1\n{} /"/.test("");',
+    'const n = 1\nfunction pattern() {} /"/.test("");',
+    'const o = {class: 1, function: 2}; if (true) {} /"/.test("");',
 ])
 @pytest.mark.parametrize("separator", ["\n", " "])
 def test_regex_quote_or_division_cannot_hide_added_js_skip(prefix, separator):
@@ -163,14 +180,43 @@ def test_regex_quote_or_division_cannot_hide_added_js_skip(prefix, separator):
     r'const re = /test\.skip\(/;',
     r'function pattern() { return /test\.only\(/; }',
     'const example = "test.skip(\\\"x\\\", () => {})";',
+    r'if (true) {} /test.skip("x", () => {})/.test("");',
+    r'if (true) {} /["/]test.skip("x", () => {})/.test("");',
+    'if (true) {} /* / test.skip("x", () => {}); */',
+    'if (true) {} // / test.skip("x", () => {});',
+    'if (true) {} "test.skip(\\\"x\\\", () => {})";',
 ])
 def test_regex_and_string_contents_are_not_added_js_skips(source):
     assert tests_integrity._skip_evidence([source], "js") is None
 
 
-def test_object_expression_division_does_not_hide_executable_skip():
-    source = 'const n = {} / test.skip("x", () => {}) / 2;'
+@pytest.mark.parametrize("value", [
+    '{}', '{nested: {}}', '({})', '(() => {})',
+    'function () {}', 'async function () {}', 'class {}', '{method() {}}',
+    '{default: {}}', 'true ? {} : {}', 'object.if({})',
+    'class extends (class {}) {}', 'class extends (function () {}) {}',
+])
+def test_object_expression_division_does_not_hide_executable_skip(value):
+    source = f'const n = {value} / test.skip("x", () => {{}}) / 2;'
     assert tests_integrity._skip_evidence([source], "js") == source
+
+
+def test_for_await_block_regex_cannot_hide_added_skip():
+    source = ('async function pattern() { for await (const x of []) {} '
+              '/"/.test(""); test.skip("x", () => {}); }')
+    assert tests_integrity._skip_evidence([source], "js") == source
+
+
+def test_js_mask_preserves_offsets_and_added_line_provenance():
+    source = ('if (true) {} /* retained comment\ncontinued */ /["/]/.test("");\n'
+              'test\n.skip("x", () => {});\n')
+    code = tests_integrity._js_code(source)
+    assert len(code) == len(source)
+    assert [i for i, c in enumerate(code) if c == "\n"] == [
+        i for i, c in enumerate(source) if c == "\n"]
+    assert code.index('test\n.skip(') == source.index('test\n.skip(')
+    assert tests_integrity._skip_evidence(source.splitlines(), "js", [1, 2]) is None
+    assert tests_integrity._skip_evidence(source.splitlines(), "js", [4]) == '.skip("x", () => {});'
 
 
 def test_comment_opener_after_expression_prefix_stays_noncode():
@@ -178,18 +224,24 @@ def test_comment_opener_after_expression_prefix_stays_noncode():
     assert tests_integrity._skip_evidence(source.splitlines(), "js") is None
 
 
-def test_real_git_regex_quote_does_not_allow_signed_strict_pass(repo):
+@pytest.mark.parametrize("addition,blocked", [
+    ('const re = /"/;\ntest.skip("x", () => {});\n', True),
+    ('if (true) {} /"/.test(""); test.skip("x", () => {});\n', True),
+    ('if (true) {} /test.skip("x", () => {})/.test("");\n', False),
+])
+def test_real_git_regex_context_has_signed_strict_verdict(repo, addition, blocked):
     path = repo / "tests/example.test.js"
     path.write_text('test("honest", () => {});\n')
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "JavaScript test baseline")
-    path.write_text(path.read_text() + 'const re = /"/;\ntest.skip("x", () => {});\n')
+    path.write_text(path.read_text() + addition)
     verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
-    assert not verdict.passed
+    assert verdict.passed is not blocked
     assert verdict.integrity_policy == "strict-v1"
     assert verdict.entry_hash
     assert verify_chain(str(repo / engine.DEFAULT_DB))
-    assert ("added-skip", Severity.BLOCK) in {(f.rule, f.severity) for f in verdict.findings}
+    assert (("added-skip", Severity.BLOCK) in {
+        (f.rule, f.severity) for f in verdict.findings}) is blocked
 
 
 def test_malformed_quoted_patch_path_rejects_trailing_escape():

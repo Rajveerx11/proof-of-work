@@ -27,16 +27,143 @@ _PY_SKIP_CALLS = {"pytest.skip", "pytest.xfail", "self.skipTest",
                   "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
 _PY_MARKS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail"}
 _JS_SKIP = re.compile(r"(?<![\w.$])(?:it|test|describe|context)\s*\.\s*(?:skip|only)\s*\(")
-# Recognize regex literals at expression starts before interpreting their quotes
-# as string delimiters. Division must remain code, not swallow later skip calls.
-_JS_REGEX = r"/(?![/*])(?:\\[^\r\n]|\[(?:\\[^\r\n]|[^\]\\\r\n])*\]|[^/\\[\r\n])+/[dgimsuvy]*"
-_JS_NONCODE = re.compile(
-    r"//[^\n]*|/\*[\s\S]*?\*/|"
-    r"(?:[=(:,!&|?{;\[]\s*|(?<![\w.$])(?:return|throw|case|yield|await)\s+|^\s*)"
-    + _JS_REGEX
-    + r"|\"(?:\\[\s\S]|[^\"\\\r\n])*\"|'(?:\\[\s\S]|[^'\\\r\n])*'|`(?:\\.|[^`\\])*`",
-    re.MULTILINE,
+_JS_REGEX = re.compile(
+    r"/(?![/*])(?:\\[^\r\n]|\[(?:\\[^\r\n]|[^\]\\\r\n])*\]|[^/\\[\r\n])+/[dgimsuvy]*"
 )
+_JS_COMMENT = re.compile(r"//[^\n]*|/\*[\s\S]*?(?:\*/|$)")
+_JS_STRING = re.compile(
+    r"\"(?:\\[\s\S]|[^\"\\\r\n])*\"|'(?:\\[\s\S]|[^'\\\r\n])*'|`(?:\\[\s\S]|[^`\\])*`"
+)
+_JS_TOKEN = re.compile(r"[\w$]+|\.\.\.|===|!==|=>|\+\+|--|&&|\|\||\?\?|\?\.|==|!=|<=|>=|[^\s]")
+_JS_CONTROLS = {"if", "while", "for", "with", "switch", "catch"}
+
+
+def _js_code(source: str) -> str:
+    """Mask noncode without changing offsets; distinguish block ends from values.
+
+    ponytail: lightweight lexical context, not a JS/TS parser. Templates remain
+    opaque and aliases/shadowing are unresolved; deeper semantics need a parser.
+    """
+    code = list(source)
+    # Frames remember whether a closing delimiter ends a statement or a value.
+    frames: list[tuple[str, str]] = []
+    expression_start = statement_start = True
+    previous = closed_paren = ""
+    pending_function = pending_control = label = async_kind = ""
+    pending_classes: list[tuple[int, str]] = []
+    case_depth: int | None = None
+    ternaries: list[int] = []
+    pos = 0
+    while pos < len(source):
+        if source[pos].isspace():
+            pos += 1
+            continue
+        comment = _JS_COMMENT.match(source, pos)
+        literal = None if comment else _JS_STRING.match(source, pos)
+        if not comment and not literal and expression_start:
+            literal = _JS_REGEX.match(source, pos)
+        if masked := comment or literal:
+            code[pos:masked.end()] = ["\n" if c == "\n" else " " for c in masked.group()]
+            pos = masked.end()
+            if literal:
+                expression_start = statement_start = False
+                previous, closed_paren = "literal", ""
+            continue
+        match = _JS_TOKEN.match(source, pos)
+        assert match is not None  # whitespace was handled above
+        token = match.group()
+        pos = match.end()
+        was_statement_start = statement_start
+        declaration_kind = "block" if statement_start or not expression_start else "expression-block"
+        if token == "(":
+            kind = pending_function or pending_control or "value"
+            frames.append(("(", kind))
+            pending_function = ""
+            expression_start, statement_start = True, False
+        elif token == ")":
+            closed_paren = frames.pop()[1] if frames and frames[-1][0] == "(" else "value"
+            expression_start = statement_start = closed_paren in _JS_CONTROLS
+        elif token == "{":
+            if pending_classes and pending_classes[-1][0] == len(frames):
+                kind = pending_classes.pop()[1]
+            elif previous == ")" and closed_paren == "switch":
+                kind = "switch"
+            elif previous == "=>":
+                kind = "expression-block"
+            elif previous == ")" and closed_paren in {"block", "expression-block"}:
+                kind = closed_paren
+            else:
+                kind = "block" if statement_start or not expression_start else "object"
+            frames.append(("{", kind))
+            expression_start, statement_start = True, kind != "object"
+        elif token == "}":
+            kind = frames.pop()[1] if frames and frames[-1][0] == "{" else "block"
+            expression_start = statement_start = kind in {"block", "switch"}
+        elif token == "[":
+            frames.append(("[", "value"))
+            expression_start, statement_start = True, False
+        elif token == "]":
+            if frames and frames[-1][0] == "[":
+                frames.pop()
+            expression_start = statement_start = False
+        elif token == ";":
+            expression_start = True
+            statement_start = not frames or frames[-1] in {("{", "block"), ("{", "switch")}
+        elif token == "?":
+            ternaries.append(len(frames))
+            expression_start, statement_start = True, False
+        elif token == ":":
+            expression_start = True
+            if ternaries and ternaries[-1] == len(frames):
+                ternaries.pop()
+                statement_start = False
+            else:
+                statement_start = previous == label or case_depth == len(frames)
+                if case_depth == len(frames):
+                    case_depth = None
+        elif token in {"function", "class"} and previous not in {".", "?."}:
+            kind = async_kind if previous == "async" else declaration_kind
+            if token == "function":
+                pending_function = kind
+            else:
+                pending_classes.append((len(frames), kind))
+            expression_start = statement_start = False
+        elif (token in {"case", "default"} and frames and frames[-1] == ("{", "switch")
+              and previous not in {".", "?."}):
+            case_depth = len(frames)
+            expression_start, statement_start = True, False
+        elif token in {"async", "export", "default"} and statement_start:
+            # Declaration prefixes must not turn function/class bodies into values.
+            expression_start = True
+        elif re.fullmatch(r"[\w$]+", token):
+            expression_start = (previous not in {".", "?."} and token in {
+                "return", "throw", "case", "yield", "await", "delete", "void", "typeof",
+                "new", "in", "instanceof", "else", "do"})
+            statement_start = token in {"else", "do", "try", "finally"}
+        elif token in {".", "?."}:
+            expression_start = statement_start = False
+        elif token in {"++", "--"}:
+            statement_start = False  # prefix still expects a value; postfix does not
+        else:
+            expression_start, statement_start = True, False
+        if token in {":", ",", ";", "}", ")", "]"}:
+            # Property names like `class:` are not declarations; discard stale
+            # headers when leaving their depth, without losing an outer class.
+            header_depth = len(frames) + int(token in {"}", ")", "]"})
+            while pending_classes and pending_classes[-1][0] >= header_depth:
+                pending_classes.pop()
+            if token in {":", ",", ";"}:
+                pending_function = ""
+        if token in _JS_CONTROLS and previous not in {".", "?."}:
+            pending_control = token
+        elif not (token == "await" and pending_control == "for"):
+            pending_control = ""
+        async_kind = declaration_kind if token == "async" else ""
+        label = token if was_statement_start and re.fullmatch(r"[\w$]+", token) else ""
+        if token != ")":
+            closed_paren = ""
+        previous = token
+    return "".join(code)
 
 
 def _skip_evidence(
@@ -81,7 +208,7 @@ def _skip_evidence(
                 if changed := marker_rows & added_rows:
                     return lines[min(changed) - 1].strip()
     elif language in ("js", "ts"):
-        code = _JS_NONCODE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), source)
+        code = _js_code(source)
         for match in _JS_SKIP.finditer(code):
             start = code.count("\n", 0, match.start()) + 1
             end = code.count("\n", 0, match.end()) + 1
