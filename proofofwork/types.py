@@ -39,6 +39,10 @@ class DiffFile:
     is_test: bool = False
     language: str = ""                 # "python" | "js" | "ts" | ""
     old_language: str = ""             # source language for renames/copies
+    # Real Git snapshots supply full lexical context and 1-based added-line provenance.
+    # Hand-built/corpus diffs may omit context; detectors retain their partial-diff fallback.
+    candidate_lines: list[str] | None = None
+    added_line_numbers: list[int] = field(default_factory=list)
 
 
 @dataclass

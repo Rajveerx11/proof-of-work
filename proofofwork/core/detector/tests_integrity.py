@@ -31,20 +31,25 @@ _JS_NONCODE = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\""
                          r"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`")
 
 
-def _skip_evidence(lines: list[str], language: str) -> str | None:
-    """Match framework syntax, not strings/comments or arbitrary object's .skip().
+def _skip_evidence(
+    lines: list[str], language: str, added_line_numbers: list[int] | None = None,
+) -> str | None:
+    """Match added framework syntax in candidate lexical context, not strings/comments.
 
-    Python diff hunks may be incomplete/indented, so tokenize rather than requiring
-    a valid whole-file AST. JS/TS matching is lexical; aliases and shadowed bindings
-    are not resolved, nor are calls inside template interpolations.
+    Real Git diffs supply the complete candidate and added-line coordinates. Legacy
+    hand-built/corpus diffs have only fragments and retain best-effort tokenization.
+    Aliases/shadowed bindings and JS template interpolations are not resolved.
     """
+    added_rows = set(added_line_numbers) if added_line_numbers is not None else set(
+        range(1, len(lines) + 1))
     source = "\n".join(lines)
     if language == "python":
         tokens = []
         try:
-            # Separate hunks can have incompatible indentation. It is irrelevant
-            # to dotted-name matching; removing it also leaves strings as strings.
-            lexical_source = "\n".join(line.lstrip() for line in lines)
+            # Only legacy fragments need indentation normalization. Full candidate
+            # context must stay intact, including multiline strings across hunks.
+            lexical_source = (source if added_line_numbers is not None else
+                              "\n".join(line.lstrip() for line in lines))
             for token in tokenize.generate_tokens(io.StringIO(lexical_source).readline):
                 if token.type not in (tokenize.NL, tokenize.INDENT, tokenize.DEDENT,
                                       tokenize.COMMENT):
@@ -62,11 +67,18 @@ def _skip_evidence(lines: list[str], language: str) -> str | None:
             is_call = end < len(tokens) and tokens[end].string == "("
             is_decorator = i > 0 and tokens[i - 1].string == "@"
             if name in _PY_MARKS or (name in _PY_SKIP_CALLS and (is_call or is_decorator)):
-                return lines[token.start[0] - 1].strip()
+                marker_tokens = tokens[i - int(is_decorator):end + int(is_call)]
+                marker_rows = {row for t in marker_tokens
+                               for row in range(t.start[0], t.end[0] + 1)}
+                if changed := marker_rows & added_rows:
+                    return lines[min(changed) - 1].strip()
     elif language in ("js", "ts"):
         code = _JS_NONCODE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), source)
-        if match := _JS_SKIP.search(code):
-            return lines[code.count("\n", 0, match.start())].strip()
+        for match in _JS_SKIP.finditer(code):
+            start = code.count("\n", 0, match.start()) + 1
+            end = code.count("\n", 0, match.end()) + 1
+            if changed := set(range(start, end + 1)) & added_rows:
+                return lines[min(changed) - 1].strip()
     return None
 
 
@@ -107,7 +119,9 @@ def check(diff: Diff, root: str) -> list[Finding]:
                                f"test function(s) removed: {', '.join(sorted(gone))}",
                                file=f.path))
 
-        if evidence := _skip_evidence(f.added, f.language):
+        candidate = f.candidate_lines if f.candidate_lines is not None else f.added
+        positions = f.added_line_numbers if f.candidate_lines is not None else None
+        if f.added and (evidence := _skip_evidence(candidate, f.language, positions)):
             out.append(Finding("added-skip", Severity.WARN,
                                "a skip/only marker was added to a test", file=f.path,
                                evidence=evidence))

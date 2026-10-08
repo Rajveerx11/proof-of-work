@@ -189,7 +189,7 @@ def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
 
     def fail_patch(root, *args):
         calls.append(args)
-        if "--unified=0" in args:
+        if gitdiff._FULL_CONTEXT in args:
             raise RuntimeError("patch unavailable")
         return original(root, *args)
 
@@ -197,7 +197,7 @@ def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="patch unavailable"):
         collect_diff(str(tmp_path), "HEAD")
     assert any("--name-status" in call for call in calls)
-    assert "--unified=0" in calls[-1]
+    assert gitdiff._FULL_CONTEXT in calls[-1]
 
 
 @pytest.mark.parametrize("language,lines", [

@@ -125,8 +125,10 @@ without this field still verify but do not attest strict enforcement. Other WARN
 
 Both source and destination paths classify Git renames/copies as test-related, including
 C-quoted paths with tabs, newlines, quotes, and Unicode. `test-path-removed` uses narrower
-known default discovery semantics: Python `test_*.py`/`*_test.py`, JS/TS `.test`/`.spec`
-filenames or Jest's `__tests__` directory. Losing these semantics emits the finding even
+known default discovery semantics: Python `test_*.py`/`*_test.py` outside pytest's
+hidden/default-excluded directories (including `dist`, `build`, and `node_modules`),
+JS/TS `.test`/`.spec` filenames (including Vitest's `mjs`/`cjs`/`mts`/`cts` variants
+and JSX/TSX extensions), or Jest's `__tests__` directory. Losing these semantics emits the finding even
 within `tests/` or with unchanged content; test-related helpers without known discovery
 semantics do not trigger it. Compatible moves with preserved assertions/functions only
 emit `renamed-test` WARN. These defaults do not establish configured collection: notably,
@@ -135,8 +137,10 @@ Copies do not imply deletion of the intact source test; their complete destinati
 content is checked as additions, including exact copies with no Git patch hunks.
 Python skip markers (including module-level `pytestmark`, `pytest.xfail`, and
 `self.skipTest`) and JS/TS `test.only` are checked without matching strings/comments
-or unrelated objects' calls. Aliases, shadowed bindings, JS template interpolations,
-and unsupported syntax are not resolved.
+or unrelated objects' calls. Real Git checks use full candidate lexical context and
+added-line coordinates; staged checks use only the index, not dirty unstaged text.
+Stored partial patches retain best-effort fragment analysis. Aliases, shadowed bindings,
+JS template interpolations, and unsupported syntax are not resolved.
 
 These are diff/path/lexical heuristics, **not proof of cheating** or proof of test discovery.
 Custom test collection, helper moves, deliberate assertion consolidation, and intentional

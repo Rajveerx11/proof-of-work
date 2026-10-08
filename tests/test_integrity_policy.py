@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 
 import pytest
 
@@ -57,8 +58,11 @@ def test_renaming_test_out_of_discovery_is_reviewable_but_strict_blocks(repo, de
 
 
 @pytest.mark.parametrize("destination", ["tests/test_renamed.py", "tests/renamed_test.py",
-                                         "test_renamed.py"])
+                                         "test_renamed.py", "tests/nested/test_x.py",
+                                         "distribution/test_x.py", "node_modules_extra/test_x.py",
+                                         "pkg.egg-info/test_x.py"])
 def test_preserved_move_between_test_paths_is_not_strict_block(repo, destination):
+    (repo / destination).parent.mkdir(parents=True, exist_ok=True)
     _git(repo, "mv", "tests/test_x.py", destination)
     verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
     assert verdict.passed
@@ -358,3 +362,172 @@ def test_exact_copy_to_source_path_preserves_additive_signals(repo, content, exp
     verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
     assert verdict.passed  # unrelated WARNs keep their existing advisory policy
     assert {f.rule for f in verdict.findings} == ({expected_rule} if expected_rule else set())
+
+
+def _docstring_baseline(repo, *, existing_skip=False):
+    content = ('"""\n' + 'Documentation line\n' * 12 + '"""\nimport pytest\n\n'
+               + '# unchanged gap\n' * 12
+               + ("@pytest.mark.skip(reason='later')\n" if existing_skip else '')
+               + 'def test_x():\n    assert 1 == 1\n\n'
+               + 'def test_y():\n    assert 2 == 2\n# original tail\n')
+    (repo / 'tests/test_x.py').write_text(content)
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'docstring baseline')
+    return content
+
+
+@pytest.mark.parametrize('suppress_blank_context', [False, True])
+def test_disjoint_docstring_opening_cannot_hide_added_skip(repo, suppress_blank_context):
+    _git(repo, 'config', 'diff.suppressBlankEmpty', str(suppress_blank_context).lower())
+    content = _docstring_baseline(repo)
+    candidate = content.replace('"""', 'r"""', 1).replace(
+        'def test_x():', "@pytest.mark.skip(reason='later')\ndef test_x():")
+    (repo / 'tests/test_x.py').write_text(candidate)
+    assert _git(repo, 'diff', '--unified=0').count('@@ -') == 2
+    verdict = engine.check(str(repo), strict_integrity=True)
+    assert verdict.tests.passed
+    assert '1 skipped' in verdict.tests.raw
+    assert verdict.entry_hash
+    assert verdict.integrity_policy == 'strict-v1'
+    assert verify_chain(str(repo / engine.DEFAULT_DB))
+    assert not verdict.passed
+    assert ('added-skip', Severity.BLOCK) in {(f.rule, f.severity) for f in verdict.findings}
+    changed = collect_diff(str(repo)).files[0]
+    assert changed.candidate_lines == candidate.splitlines()
+    assert changed.added_line_numbers == [1, candidate.splitlines().index(
+        "@pytest.mark.skip(reason='later')") + 1]
+
+
+def test_disjoint_added_docstring_text_is_not_executable_skip(repo):
+    content = _docstring_baseline(repo)
+    candidate = content.replace('Documentation line\n', "pytest.xfail('later')\n", 1).replace(
+        '# original tail', '# changed tail')
+    (repo / 'tests/test_x.py').write_text(candidate)
+    assert _git(repo, 'diff', '--unified=0').count('@@ -') == 2
+    verdict = engine.check(str(repo), strict_integrity=True)
+    assert verdict.tests.passed
+    assert '2 passed' in verdict.tests.raw
+    assert verdict.entry_hash
+    assert verdict.integrity_policy == 'strict-v1'
+    assert verify_chain(str(repo / engine.DEFAULT_DB))
+    assert verdict.passed
+    assert not any(f.rule == 'added-skip' for f in verdict.findings)
+
+
+def test_added_docstring_duplicate_of_existing_marker_is_not_added_skip(repo):
+    content = _docstring_baseline(repo, existing_skip=True)
+    candidate = content.replace('Documentation line\n', "@pytest.mark.skip(reason='later')\n", 1)
+    (repo / 'tests/test_x.py').write_text(candidate)
+    verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert verdict.passed
+    assert not verdict.findings
+
+
+@pytest.mark.parametrize('staged_skip', [False, True])
+def test_skip_lexical_context_uses_index_not_dirty_worktree(repo, staged_skip):
+    content = _docstring_baseline(repo)
+    skipped = content.replace('"""', 'r"""', 1).replace(
+        'def test_x():', "@pytest.mark.skip(reason='later')\ndef test_x():")
+    documented = content.replace('Documentation line\n', "pytest.xfail('later')\n", 1)
+    path = repo / 'tests/test_x.py'
+    path.write_text(skipped if staged_skip else documented)
+    _git(repo, 'add', '-A')
+    path.write_text(documented if staged_skip else skipped)
+    staged_file = collect_diff(str(repo), staged=True).files[0]
+    assert staged_file.candidate_lines == (skipped if staged_skip else documented).splitlines()
+    staged_verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    working_verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert staged_verdict.passed is not staged_skip
+    assert working_verdict.passed is staged_skip
+    assert any(f.rule == 'added-skip' for f in staged_verdict.findings) is staged_skip
+    assert any(f.rule == 'added-skip' for f in working_verdict.findings) is not staged_skip
+
+
+@pytest.mark.parametrize('directory', [
+    '.hidden', 'tests/.hidden', 'dist', 'node_modules', 'build', 'venv',
+    'pkg.egg', '_darcs', 'CVS', '{arch}',
+])
+def test_python_move_into_default_excluded_directory_strict_blocks(repo, directory):
+    destination = f'{directory}/test_x.py'
+    (repo / directory).mkdir(parents=True, exist_ok=True)
+    _git(repo, 'mv', 'tests/test_x.py', destination)
+    verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    assert not verdict.passed
+    assert ('test-path-removed', Severity.BLOCK) in {(f.rule, f.severity) for f in verdict.findings}
+    collected = subprocess.run([sys.executable, '-m', 'pytest', '--collect-only', '-q'],
+                               cwd=repo, capture_output=True, text=True, check=False)
+    assert collected.returncode == 5, collected.stdout + collected.stderr
+    assert 'no tests collected' in collected.stdout
+
+
+@pytest.mark.parametrize('extension', ['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'mts', 'cts',
+                                       'mjsx', 'cjsx', 'mtsx', 'ctsx'])
+@pytest.mark.parametrize('kind', ['test', 'spec'])
+def test_js_module_test_names_are_detected_and_preserve_discovery(repo, extension, kind):
+    source = f'x.{kind}.{extension}'
+    destination = f'renamed.{kind}.{extension}'
+    (repo / source).write_text("test('works', () => {});\n")
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'module test baseline')
+    _git(repo, 'mv', source, destination)
+    verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    assert verdict.passed
+    assert [(f.rule, f.severity) for f in verdict.findings] == [('renamed-test', Severity.WARN)]
+    (repo / destination).write_text("test.skip('works', () => {});\n")
+    _git(repo, 'add', '-A')
+    verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    assert not verdict.passed
+    assert any(f.rule == 'added-skip' for f in verdict.findings)
+
+
+@pytest.mark.parametrize('path', [
+    'test.mjs', 'x.test.json', 'x.spec.css', 'x.testing.mjs', 'x.test.mjs.txt',
+    'x.TEST.mjs', 'x.test.mmjs', '__tests__/x.txt',
+])
+def test_non_default_js_module_names_do_not_claim_discovery(path):
+    assert not gitdiff._test_discovery(path)
+    if path != '__tests__/x.txt' and path != 'x.TEST.mjs':
+        assert not gitdiff._is_test(path)
+
+
+@pytest.mark.parametrize('extension', ['mjs', 'cjs', 'mts', 'cts'])
+def test_js_module_test_move_to_helper_loses_discovery(repo, extension):
+    source = f'x.test.{extension}'
+    destination = f'helper.{extension}'
+    (repo / source).write_text("test('works', () => {});\n")
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'module test baseline')
+    _git(repo, 'mv', source, destination)
+    verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    assert not verdict.passed
+    assert ('test-path-removed', Severity.BLOCK) in {(f.rule, f.severity) for f in verdict.findings}
+
+
+def test_multiline_marker_checks_added_tokens_with_unchanged_prefix(repo):
+    content = _docstring_baseline(repo)
+    content = content.replace('import pytest\n', "import pytest\npytestmark = (\n    pytest.mark\n"
+                              "    .filterwarnings('ignore')\n)\n")
+    path = repo / 'tests/test_x.py'
+    path.write_text(content)
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'multiline marker baseline')
+    path.write_text(content.replace(".filterwarnings('ignore')", ".skip(reason='later')"))
+    diff = collect_diff(str(repo))
+    assert diff.files[0].added == ["    .skip(reason='later')"]
+    verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert not verdict.passed
+    assert [(f.rule, f.evidence) for f in verdict.findings] == [
+        ('added-skip', ".skip(reason='later')")]
+
+
+def test_js_added_string_duplicate_of_unchanged_skip_is_not_added_skip(repo):
+    content = ('const doc = `\n' + 'Documentation line\n' * 12 + '`;\n'
+               + "test.skip('later', () => {});\n")
+    path = repo / 'x.test.mjs'
+    path.write_text(content)
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'JS string baseline')
+    path.write_text(content.replace('Documentation line\n', "test.skip('later', () => {});\n", 1))
+    verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert verdict.passed
+    assert not verdict.findings

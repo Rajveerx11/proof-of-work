@@ -1,11 +1,13 @@
 """Parse a git changeset into the frozen Diff/DiffFile contract via git plumbing.
 
-`--name-status -z` supplies authoritative statuses/renames; `--unified=0` supplies
-added/removed source lines. Copies also use a no-renames patch to inspect the entire
-new destination, even when Git's copy patch has no hunks.
+`--name-status -z` supplies authoritative statuses/renames; full-context patches
+supply added/removed lines, candidate lexical context, and added-line coordinates.
+Copies also use a no-renames patch to inspect the entire new destination, even when
+Git's copy patch has no hunks. Cached patches never read dirty working-tree text.
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import subprocess
@@ -16,8 +18,14 @@ _TEST_DIR_MARKERS = ("/tests/", "/test/", "/__tests__/")
 _LANG = {
     ".py": "python",
     ".js": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js",
-    ".ts": "ts", ".tsx": "ts",
+    ".mjsx": "js", ".cjsx": "js",
+    ".ts": "ts", ".tsx": "ts", ".mts": "ts", ".cts": "ts",
+    ".mtsx": "ts", ".ctsx": "ts",
 }
+_JS_TEST_SUFFIX = re.compile(r"\.(?:test|spec)\.[cm]?[jt]sx?$")
+_PY_NORECURSEDIRS = ("*.egg", ".*", "_darcs", "build", "CVS", "dist",
+                     "node_modules", "venv", "{arch}")
+_FULL_CONTEXT = "--unified=2147483647"
 
 
 def _language(path: str) -> str:
@@ -35,11 +43,7 @@ def _is_test(path: str) -> bool:
         return True
     if any(m in "/" + low for m in _TEST_DIR_MARKERS):
         return True
-    for suf in (".test.js", ".test.ts", ".test.jsx", ".test.tsx",
-                ".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx"):
-        if base.endswith(suf):
-            return True
-    return False
+    return bool(_JS_TEST_SUFFIX.search(base))
 
 
 def _test_discovery(path: str) -> str:
@@ -47,14 +51,20 @@ def _test_discovery(path: str) -> str:
 
     Keep this narrower than _is_test: a helper under tests/ is test-related but
     is not necessarily a collected test. JS __tests__ is a Jest default, not Vitest's.
+    Explicit custom includes/excludes and environment-directory detection remain
+    outside this path-only heuristic.
     """
     p = path.replace("\\", "/")
     base = p.rsplit("/", 1)[-1]
     language = _language(path)
     if base.endswith(".py") and (base.startswith("test_") or base.endswith("_test.py")):
+        directories = p.split("/")[:-1]
+        if any(fnmatch.fnmatch(part, pattern)
+               for part in directories for pattern in _PY_NORECURSEDIRS):
+            return ""
         return "python"
     if language in ("js", "ts") and (
-        re.search(r"\.(?:test|spec)\.[jt]sx?$", base) or "/__tests__/" in "/" + p
+        _JS_TEST_SUFFIX.search(base) or "/__tests__/" in "/" + p
     ):
         return "js"
     return ""
@@ -64,7 +74,7 @@ def _git(root: str, *args: str) -> str:
     """Run git plumbing; raise on errors so an incomplete diff cannot pass."""
     try:
         cp = subprocess.run(
-            ["git", "-c", "core.quotepath=false", *args],
+            ["git", "-c", "core.quotepath=false", "-c", "diff.suppressBlankEmpty=false", *args],
             cwd=root, capture_output=True, check=False,
         )
     except (OSError, ValueError) as exc:
@@ -130,12 +140,19 @@ def _patch_path(value: str) -> str | None:
     return value[2:] if value[:2] in ("a/", "b/") else value
 
 
-def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
-    """path -> (added_lines, removed_lines), text stripped of the +/- prefix."""
+def _parse_unified(
+    out: str, *, context: dict[str, tuple[list[str], list[int]]] | None = None,
+) -> dict[str, tuple[list[str], list[str]]]:
+    """path -> (added, removed); optionally capture full-context candidate + positions.
+
+    Only full-context Git patches may supply ``context``. Partial corpus patches
+    still use the original added/removed-only contract.
+    """
     added: dict[str, list[str]] = {}
     removed: dict[str, list[str]] = {}
     old = new = key = None
     in_hunk = False
+    new_line = 0
     for line in out.split("\n"):
         line = line.removesuffix("\r")
         if line.startswith("diff --git "):
@@ -143,6 +160,11 @@ def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
             in_hunk = False
         elif line.startswith("@@ "):
             in_hunk = True
+            if context is not None:
+                match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+                if match is None:
+                    raise ValueError("invalid Git hunk coordinates")
+                new_line = int(match.group(1))
         elif not in_hunk and line.startswith("--- "):
             old = _patch_path(line[4:])
         elif not in_hunk and line.startswith("+++ "):
@@ -151,10 +173,19 @@ def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
             if key is not None:
                 added.setdefault(key, [])
                 removed.setdefault(key, [])
+                if context is not None:
+                    context.setdefault(key, ([], []))
         elif in_hunk and key is not None and line.startswith("+"):
             added[key].append(line[1:])
+            if context is not None:
+                context[key][0].append(line[1:])
+                context[key][1].append(new_line)
+                new_line += 1
         elif in_hunk and key is not None and line.startswith("-"):
             removed[key].append(line[1:])
+        elif in_hunk and key is not None and line.startswith(" ") and context is not None:
+            context[key][0].append(line[1:])
+            new_line += 1
     return {k: (added.get(k, []), removed.get(k, [])) for k in added.keys() | removed.keys()}
 
 
@@ -205,7 +236,7 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
     unified_out = _git(
         root,
         "diff",
-        "--unified=0",
+        _FULL_CONTEXT,
         "--no-color",
         "--text",
         "--no-ext-diff",
@@ -216,15 +247,17 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
         "--",
     )
 
-    lines_by_path = _parse_unified(unified_out)
+    context: dict[str, tuple[list[str], list[int]]] = {}
+    lines_by_path = _parse_unified(unified_out, context=context)
     statuses = _parse_name_status(status_out)
     # A C100 patch contains no source lines. A copy introduces all destination
     # content, not just the edits relative to the still-existing source. Diffing
     # without move detection also respects --cached and Git's raw-text safeguards.
+    copy_context: dict[str, tuple[list[str], list[int]]] = {}
     copies = (_parse_unified(_git(
-        root, "diff", "--unified=0", "--no-color", "--text", "--no-ext-diff",
+        root, "diff", _FULL_CONTEXT, "--no-color", "--text", "--no-ext-diff",
         "--no-textconv", "--no-renames", *cached, commit, "--",
-    )) if any(status == "C" for status, _, _ in statuses) else {})
+    ), context=copy_context) if any(status == "C" for status, _, _ in statuses) else {})
     files: list[DiffFile] = []
     for status, path, old_path in statuses:
         added, removed = (copies.get(path, ([], [])) if status == "C" else
@@ -235,5 +268,7 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
             is_test=_is_test(path) or _is_test(old_path),
             language=_language(path) or _language(old_path),
             old_language=_language(old_path),
+            candidate_lines=(copy_context if status == "C" else context).get(path, (None, []))[0],
+            added_line_numbers=(copy_context if status == "C" else context).get(path, (None, []))[1],
         ))
     return Diff(files=files, base_ref=base_ref)
