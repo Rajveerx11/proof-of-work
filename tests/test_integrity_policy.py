@@ -245,6 +245,9 @@ def test_debugger_statement_followed_by_regex_content_is_not_a_skip(prefix):
     'const ratio = object.of / test.skip("x", () => {}) / 2;',
     'const ratio = of / test.skip("x", () => {}) / 2;',
     'for (a = of / test.skip("x", () => {}) / 2;;) {}',
+    'for (let x = typeof of / test.skip("x", () => {}) / 2; false;) {}',
+    'for (let x = void of / test.skip("x", () => {}) / 2; false;) {}',
+    'for (x in typeof of / test.skip("x", () => {}) / 2) {}',
     'const ratio = object.debugger / test.skip("x", () => {}) / 2;',
 ])
 def test_contextual_identifiers_preserve_executable_division(source):

@@ -47,6 +47,9 @@ def _js_code(source: str) -> str:
     code = list(source)
     # Frames remember whether a closing delimiter ends a statement or a value.
     frames: list[tuple[str, str]] = []
+    # A classic initializer or for-in RHS cannot later turn an identifier `of`
+    # into a for-of separator. Depth keys keep nested loop headers independent.
+    for_expressions: set[int] = set()
     expression_start = statement_start = True
     previous = closed_paren = ""
     pending_function = pending_control = label = async_kind = ""
@@ -74,6 +77,8 @@ def _js_code(source: str) -> str:
         token = match.group()
         pos = match.end()
         was_statement_start = statement_start
+        if frames and frames[-1] == ("(", "for") and token in {"=", ";", ",", "in"}:
+            for_expressions.add(len(frames))
         declaration_kind = "block" if statement_start or not expression_start else "expression-block"
         if token == "(":
             kind = pending_function or pending_control or "value"
@@ -81,6 +86,7 @@ def _js_code(source: str) -> str:
             pending_function = ""
             expression_start, statement_start = True, False
         elif token == ")":
+            for_expressions.discard(len(frames))
             closed_paren = frames.pop()[1] if frames and frames[-1][0] == "(" else "value"
             expression_start = statement_start = closed_paren in _JS_CONTROLS
         elif token == "{":
@@ -145,8 +151,10 @@ def _js_code(source: str) -> str:
             binding_target = (previous in {"]", "}"}
                               or (bool(re.fullmatch(r"[\w$]+", previous))
                                   and previous not in {"const", "let", "var", "literal"}))
-            for_of = token == "of" and bool(frames) and frames[-1] == ("(", "for") \
-                and binding_target
+            for_of = (token == "of" and bool(frames) and frames[-1] == ("(", "for")
+                      and len(frames) not in for_expressions
+                      and (not expression_start or previous in {"}", "]"})
+                      and binding_target)
             expression_start = for_of or (previous not in {".", "?."} and token in {
                 "return", "throw", "case", "yield", "await", "delete", "void", "typeof",
                 "new", "in", "instanceof", "else", "do"})
