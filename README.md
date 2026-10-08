@@ -128,7 +128,8 @@ C-quoted paths with tabs, newlines, quotes, and Unicode. `test-path-removed` use
 known default discovery semantics: Python `test_*.py`/`*_test.py` outside pytest's
 hidden/default-excluded directories (including `dist`, `build`, and `node_modules`),
 JS/TS `.test`/`.spec` filenames (including Vitest's `mjs`/`cjs`/`mts`/`cts` variants
-and JSX/TSX extensions), or Jest's `__tests__` directory. Losing these semantics emits the finding even
+and JSX/TSX extensions), or Jest's `__tests__` directory, excluding JS/TS paths
+inside `node_modules`. Losing these semantics emits the finding even
 within `tests/` or with unchanged content; test-related helpers without known discovery
 semantics do not trigger it. Compatible moves with preserved assertions/functions only
 emit `renamed-test` WARN. These defaults do not establish configured collection: notably,

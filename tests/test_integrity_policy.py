@@ -333,12 +333,17 @@ def test_test_related_helper_move_does_not_claim_discovery_loss(repo, destinatio
     ("__tests__/x.js", "tests/helper.js", True),
     ("__tests__/x.js", "__tests__/renamed.js", False),
     ("tests/helper.js", "helper.js", False),
+    ("tests/x.test.ts", "node_modules/pkg/x.test.ts", True),
+    ("tests/x.test.mjs", "packages/pkg/node_modules/pkg/x.test.mjs", True),
+    ("__tests__/x.js", "node_modules/pkg/__tests__/x.js", True),
+    ("tests/x.test.ts", "node_modules_extra/x.test.ts", False),
 ])
 def test_js_default_discovery_move_semantics(repo, source, destination, loses_discovery):
     (repo / source).parent.mkdir(parents=True, exist_ok=True)
     (repo / source).write_text("test('works', () => { expect(2).toBe(2); });\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "JS baseline")
+    (repo / destination).parent.mkdir(parents=True, exist_ok=True)
     _git(repo, "mv", source, destination)
     verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
     assert verdict.passed is not loses_discovery

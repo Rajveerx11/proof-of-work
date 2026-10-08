@@ -66,7 +66,7 @@ def _test_discovery(path: str) -> str:
     if language in ("js", "ts") and (
         _JS_TEST_SUFFIX.search(base) or "/__tests__/" in "/" + p
     ):
-        return "js"
+        return "" if "node_modules" in p.split("/")[:-1] else "js"
     return ""
 
 
