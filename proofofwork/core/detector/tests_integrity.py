@@ -1,11 +1,13 @@
 """Test-suite integrity: deleted/renamed test files, removed test fns, added skips."""
 from __future__ import annotations
 
+import io
 import re
+import tokenize
 from dataclasses import replace
 
 from ...types import Diff, Finding, Severity
-from ..gitdiff import _is_test
+from ..gitdiff import _test_discovery
 
 # Trusted caller policy only: never read enforcement settings from the candidate tree.
 STRICT_RULES = frozenset({"test-path-removed", "removed-test-fn", "added-skip", "removed-assert"})
@@ -21,13 +23,51 @@ def apply_policy(findings: list[Finding], *, strict: bool) -> list[Finding]:
 _PY_TEST_FN = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
 _JS_TEST_FN = re.compile(r"""^\s*(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)""")
 
-# framework skip/focus markers only — bare ".skip(" / "xfail" match unrelated code
-# (db.skip(5), a var named xfail) and cause false positives.
-_SKIP_PATTERNS = (
-    "@pytest.mark.skip", "@unittest.skip", "pytest.skip(", "@pytest.mark.xfail",
-    "it.skip(", "describe.skip(", "test.skip(", "context.skip(",
-    "it.only(", "describe.only(",
-)
+_PY_SKIP_CALLS = {"pytest.skip", "pytest.xfail", "self.skipTest",
+                  "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
+_PY_MARKS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail"}
+_JS_SKIP = re.compile(r"(?<![\w.$])(?:it|test|describe|context)\s*\.\s*(?:skip|only)\s*\(")
+_JS_NONCODE = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\""
+                         r"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`")
+
+
+def _skip_evidence(lines: list[str], language: str) -> str | None:
+    """Match framework syntax, not strings/comments or arbitrary object's .skip().
+
+    Python diff hunks may be incomplete/indented, so tokenize rather than requiring
+    a valid whole-file AST. JS/TS matching is lexical; aliases and shadowed bindings
+    are not resolved, nor are calls inside template interpolations.
+    """
+    source = "\n".join(lines)
+    if language == "python":
+        tokens = []
+        try:
+            # Separate hunks can have incompatible indentation. It is irrelevant
+            # to dotted-name matching; removing it also leaves strings as strings.
+            lexical_source = "\n".join(line.lstrip() for line in lines)
+            for token in tokenize.generate_tokens(io.StringIO(lexical_source).readline):
+                if token.type not in (tokenize.NL, tokenize.INDENT, tokenize.DEDENT,
+                                      tokenize.COMMENT):
+                    tokens.append(token)
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            pass  # retained tokens still cover complete calls in a partial diff
+        for i, token in enumerate(tokens):
+            if token.type != tokenize.NAME or (i and tokens[i - 1].string == "."):
+                continue
+            name, end = token.string, i + 1
+            while (end + 1 < len(tokens) and tokens[end].string == "."
+                   and tokens[end + 1].type == tokenize.NAME):
+                name += "." + tokens[end + 1].string
+                end += 2
+            is_call = end < len(tokens) and tokens[end].string == "("
+            is_decorator = i > 0 and tokens[i - 1].string == "@"
+            if name in _PY_MARKS or (name in _PY_SKIP_CALLS and (is_call or is_decorator)):
+                return lines[token.start[0] - 1].strip()
+    elif language in ("js", "ts"):
+        code = _JS_NONCODE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), source)
+        if match := _JS_SKIP.search(code):
+            return lines[code.count("\n", 0, match.start())].strip()
+    return None
 
 
 def _test_fn_names(lines: list[str], language: str) -> set[str]:
@@ -51,10 +91,11 @@ def check(diff: Diff, root: str) -> list[Finding]:
             out.append(Finding("renamed-test", Severity.WARN,
                                f"test file renamed: {f.old_path} -> {f.path}",
                                file=f.path))
-            if _is_test(f.old_path) and not _is_test(f.path):
+            old_discovery = _test_discovery(f.old_path)
+            if old_discovery and old_discovery != _test_discovery(f.path):
                 out.append(Finding("test-path-removed", Severity.WARN,
-                                   "test renamed outside recognized test paths; "
-                                   "verify discovery/configuration for the new path",
+                                   "test rename loses known default discovery semantics; "
+                                   "verify custom collection/configuration for the new path",
                                    file=f.path, evidence=f"{f.old_path} -> {f.path}"))
 
         # Copies leave the source test intact; edits with the same name are not removals.
@@ -66,10 +107,8 @@ def check(diff: Diff, root: str) -> list[Finding]:
                                f"test function(s) removed: {', '.join(sorted(gone))}",
                                file=f.path))
 
-        for ln in f.added:
-            if any(p in ln for p in _SKIP_PATTERNS):
-                out.append(Finding("added-skip", Severity.WARN,
-                                   "a skip/only marker was added to a test", file=f.path,
-                                   evidence=ln.strip()))
-                break
+        if evidence := _skip_evidence(f.added, f.language):
+            out.append(Finding("added-skip", Severity.WARN,
+                               "a skip/only marker was added to a test", file=f.path,
+                               evidence=evidence))
     return out

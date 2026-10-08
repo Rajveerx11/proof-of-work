@@ -1,11 +1,13 @@
 """Parse a git changeset into the frozen Diff/DiffFile contract via git plumbing.
 
-Two calls: `--name-status -z` for authoritative statuses/renames, `--unified=0`
-for the added/removed source lines. We merge them keyed by path.
+`--name-status -z` supplies authoritative statuses/renames; `--unified=0` supplies
+added/removed source lines. Copies also use a no-renames patch to inspect the entire
+new destination, even when Git's copy patch has no hunks.
 """
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 
 from ..types import Diff, DiffFile
@@ -38,6 +40,24 @@ def _is_test(path: str) -> bool:
         if base.endswith(suf):
             return True
     return False
+
+
+def _test_discovery(path: str) -> str:
+    """Known default collection families, not proof of configured discovery.
+
+    Keep this narrower than _is_test: a helper under tests/ is test-related but
+    is not necessarily a collected test. JS __tests__ is a Jest default, not Vitest's.
+    """
+    p = path.replace("\\", "/")
+    base = p.rsplit("/", 1)[-1]
+    language = _language(path)
+    if base.endswith(".py") and (base.startswith("test_") or base.endswith("_test.py")):
+        return "python"
+    if language in ("js", "ts") and (
+        re.search(r"\.(?:test|spec)\.[jt]sx?$", base) or "/__tests__/" in "/" + p
+    ):
+        return "js"
+    return ""
 
 
 def _git(root: str, *args: str) -> str:
@@ -197,9 +217,18 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
     )
 
     lines_by_path = _parse_unified(unified_out)
+    statuses = _parse_name_status(status_out)
+    # A C100 patch contains no source lines. A copy introduces all destination
+    # content, not just the edits relative to the still-existing source. Diffing
+    # without move detection also respects --cached and Git's raw-text safeguards.
+    copies = (_parse_unified(_git(
+        root, "diff", "--unified=0", "--no-color", "--text", "--no-ext-diff",
+        "--no-textconv", "--no-renames", *cached, commit, "--",
+    )) if any(status == "C" for status, _, _ in statuses) else {})
     files: list[DiffFile] = []
-    for status, path, old_path in _parse_name_status(status_out):
-        added, removed = lines_by_path.get(path, ([], []))
+    for status, path, old_path in statuses:
+        added, removed = (copies.get(path, ([], [])) if status == "C" else
+                          lines_by_path.get(path, ([], [])))
         files.append(DiffFile(
             path=path, status=status, old_path=old_path,
             added=list(added), removed=list(removed),

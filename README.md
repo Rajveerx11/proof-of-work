@@ -118,17 +118,27 @@ Turning strict mode off is an advisory run, **not** a recorded override or a str
 Strict mode promotes only `added-skip`, `removed-assert`, `removed-test-fn`, and
 `test-path-removed` from WARN to BLOCK, even when re-run tests pass. The CLI/Action then
 fails with exit code 1; JSON retains the rule and blocking severity, and the signed log
-records a failing verdict with the rule ID. Other WARNs (including a preserved rename between test paths)
-remain reviewable without becoming blockers.
+records a failing verdict with the rule ID. JSON and the signed envelope predicate include
+`integrity_policy`: `strict-v1` or `advisory-v1`, including on PASS. Legacy envelopes
+without this field still verify but do not attest strict enforcement. Other WARNs
+(including a discovery-compatible rename) remain reviewable without becoming blockers.
 
 Both source and destination paths classify Git renames/copies as test-related, including
-C-quoted paths with tabs, newlines, quotes, and Unicode. A rename outside recognized test
-paths emits `test-path-removed`, even if its content is unchanged: passing remaining tests
-does not show that the moved test is still discovered. Copies do not imply deletion of
-the intact source test; their added skip markers are still checked. A legitimate move
-between test paths with preserved assertions/functions only emits `renamed-test` WARN.
+C-quoted paths with tabs, newlines, quotes, and Unicode. `test-path-removed` uses narrower
+known default discovery semantics: Python `test_*.py`/`*_test.py`, JS/TS `.test`/`.spec`
+filenames or Jest's `__tests__` directory. Losing these semantics emits the finding even
+within `tests/` or with unchanged content; test-related helpers without known discovery
+semantics do not trigger it. Compatible moves with preserved assertions/functions only
+emit `renamed-test` WARN. These defaults do not establish configured collection: notably,
+Vitest does not collect arbitrary `__tests__` helpers by default.
+Copies do not imply deletion of the intact source test; their complete destination
+content is checked as additions, including exact copies with no Git patch hunks.
+Python skip markers (including module-level `pytestmark`, `pytest.xfail`, and
+`self.skipTest`) and JS/TS `test.only` are checked without matching strings/comments
+or unrelated objects' calls. Aliases, shadowed bindings, JS template interpolations,
+and unsupported syntax are not resolved.
 
-These are diff/path/regex heuristics, **not proof of cheating** or proof of test discovery.
+These are diff/path/lexical heuristics, **not proof of cheating** or proof of test discovery.
 Custom test collection, helper moves, deliberate assertion consolidation, and intentional
 skips can trigger review findings; dynamically generated tests and unsupported framework
 syntax can escape these checks. Review the discovery/configuration and changed semantics,

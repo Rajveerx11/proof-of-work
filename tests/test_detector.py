@@ -198,3 +198,44 @@ def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
         collect_diff(str(tmp_path), "HEAD")
     assert any("--name-status" in call for call in calls)
     assert "--unified=0" in calls[-1]
+
+
+@pytest.mark.parametrize("language,lines", [
+    ("python", ["pytestmark = pytest.mark.skip(reason='later')"]),
+    ("python", ["pytestmark = [pytest.mark.skipif(True, reason='later')]"]),
+    ("python", ["pytestmark = pytest.mark.xfail"]),
+    ("python", ["    pytest.xfail('later')"]),
+    ("python", ["    self.skipTest('later')"]),
+    ("python", ["@unittest.skipUnless(False, 'later')"]),
+    ("python", ["@unittest.skip"]),
+    ("python", ["pytestmark = pytest.mark.skip(", "    reason='later'", ")"]),
+    ("python", ["    pytest . xfail ('later')"]),
+    ("python", ["        value = 1", "    value = 2", "    self.skipTest('later')"]),
+    ("js", ["test.only('one', () => {})"]),
+    ("ts", ["test . only ('one', () => {})"]),
+    ("ts", ["context.skip('one', () => {})"]),
+])
+def test_supported_skip_and_focus_forms(language, lines):
+    diff = Diff([_f(path="tests/test_a.py", is_test=True, language=language, added=lines)])
+    findings = tests_integrity.check(diff, ".")
+    assert [f.rule for f in findings] == ["added-skip"]
+    assert tests_integrity.apply_policy(findings, strict=True)[0].severity == Severity.BLOCK
+
+
+@pytest.mark.parametrize("language,lines", [
+    ("python", ["db.skip(5)", "db.xfail('later')", "other.skipTest('later')"]),
+    ("python", ["# pytest.xfail('later')", "# self.skipTest('later')"]),
+    ("python", ['text = "pytestmark = pytest.mark.skip(reason=1)"']),
+    ("python", ['text = """', "pytest.xfail('later')", '"""']),
+    ("python", ["db.pytest.xfail('later')", "db.self.skipTest('later')"]),
+    ("python", ["test.only('this is not a Python test framework')"]),
+    ("js", ["db.skip(5); other.only('one'); other.skipTest('later');"]),
+    ("ts", ["db.test.only('one'); latest.only('one'); $test.only('one');"]),
+    ("js", ["// test.only('one')", "/* it.skip('one') */"]),
+    ("ts", ['const text = "test.only(1)";', "const other = `it.skip(1)`;"]),
+    ("ts", ["pytest.xfail('not a JS framework'); self.skipTest('not JS');"]),
+    ("", ["pytest.skip('unknown language')", "test.only('unknown language')"]),
+])
+def test_skip_matching_ignores_unrelated_calls_comments_and_strings(language, lines):
+    diff = Diff([_f(path="tests/helper", is_test=True, language=language, added=lines)])
+    assert not tests_integrity.check(diff, ".")

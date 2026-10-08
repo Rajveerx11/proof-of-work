@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from proofofwork.core.detector import learned
 from proofofwork.core.gitdiff import parse_patch
 from proofofwork.learn import corpus, loop, propose
@@ -63,26 +65,38 @@ def test_gate_accepts_clean_specific_catch():
 
 # --- full loop ---
 
-def test_loop_promotes_missed_and_skips_caught(tmp_path):
+@pytest.fixture
+def corpus_with_missed_alias(monkeypatch):
+    # Module-level pytestmark is now built-in; aliases remain outside its lexical
+    # matching. Keep a real missed skip to exercise promotion and idempotence.
+    cheats = corpus.cheats() + [("aliased_skip.diff", parse_patch(
+        "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+        "--- a/tests/test_x.py\n+++ b/tests/test_x.py\n@@ -0,0 +1,2 @@\n"
+        "+import pytest as pt\n+pytestmark = pt.mark.skip(reason='later')\n",
+    ))]
+    monkeypatch.setattr(corpus, "cheats", lambda: cheats)
+    return cheats
+
+
+def test_loop_promotes_missed_and_skips_caught(tmp_path, corpus_with_missed_alias):
     rules_file = tmp_path / "learned.json"
     rules_file.write_text(json.dumps({"ruleset_version": 1, "rules": []}))
 
     res = loop.run(rules_path=str(rules_file), write=True)
     skipped = dict(res.skipped)
 
-    # the module-level skip is missed by the built-ins -> a rule is learned for it
-    assert any("module_skip" in r["source"] for r in res.promoted)
-    # sys.exit(0) is already caught by fake_pass -> nothing new learned for it
+    assert any("aliased_skip" in r["source"] for r in res.promoted)
+    assert skipped.get("module_skip.diff") == "already caught"
     assert skipped.get("sys_exit_fake.diff") == "already caught"
 
     # the promoted rule is now live: the detector catches the once-missed cheat
     rules = learned.load_rules(str(rules_file))
-    _, cheat = next(c for c in corpus.cheats() if c[0] == "module_skip.diff")
+    _, cheat = next(c for c in corpus_with_missed_alias if c[0] == "aliased_skip.diff")
     findings = learned.apply_rules(cheat, rules)
     assert any(f.severity in (Severity.BLOCK, Severity.WARN) for f in findings)
 
 
-def test_loop_is_idempotent(tmp_path):
+def test_loop_is_idempotent(tmp_path, corpus_with_missed_alias):
     rules_file = tmp_path / "learned.json"
     rules_file.write_text(json.dumps({"ruleset_version": 1, "rules": []}))
 

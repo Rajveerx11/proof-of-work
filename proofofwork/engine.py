@@ -42,6 +42,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     from .core.gitdiff import _git, collect_diff
 
     root = os.path.abspath(root)
+    integrity_policy = "strict-v1" if strict_integrity else "advisory-v1"
 
     try:
         diff = collect_diff(root, base_ref, staged=staged)
@@ -54,7 +55,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     except Exception as exc:  # noqa: BLE001 - git failures must not become empty passing diffs
         detail = f"cannot collect git diff: {exc}"
         return Verdict(passed=False, reasons=[f"BLOCK git-diff: {detail}"],
-                       findings=[Finding("git-diff", Severity.BLOCK, detail)])
+                       findings=[Finding("git-diff", Severity.BLOCK, detail)],
+                       integrity_policy=integrity_policy)
 
     findings: list[Finding] = list(extra_findings or ())
     for check_fn in ALL_CHECKS:
@@ -194,7 +196,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK, str(exc)))
             passed, reasons = _decide(findings, tests, require_tests=run_tests)
     verdict = Verdict(passed=passed, reasons=reasons, findings=findings, tests=tests,
-                      mutation=mutation, coverage_baseline=coverage_baseline, judge=judge_meta)
+                      mutation=mutation, coverage_baseline=coverage_baseline, judge=judge_meta,
+                      integrity_policy=integrity_policy)
 
     try:  # a passing signed verdict requires a durable log record
         from .log import build_envelope, record

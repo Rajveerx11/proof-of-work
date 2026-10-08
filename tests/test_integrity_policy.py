@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 
 import pytest
@@ -12,6 +13,7 @@ from proofofwork.core import gitdiff, runner
 from proofofwork.core.detector import asserts, tests_integrity
 from proofofwork.core.gitdiff import _parse_name_status, _parse_unified, collect_diff, parse_patch
 from proofofwork.interfaces import cli
+from proofofwork.log import verify_chain
 from proofofwork.types import Diff, DiffFile, Finding, Severity, TestResult
 
 
@@ -35,7 +37,9 @@ def repo(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("destination", ["helper.py", "helper.txt", "helper.js"])
+@pytest.mark.parametrize("destination", ["helper.py", "helper.txt", "helper.js",
+                                         "tests/helper.py", "tests/test_x.txt",
+                                         "tests/test_x.js"])
 def test_renaming_test_out_of_discovery_is_reviewable_but_strict_blocks(repo, destination):
     _git(repo, "mv", "tests/test_x.py", destination)
     diff = collect_diff(str(repo), staged=True)
@@ -43,6 +47,8 @@ def test_renaming_test_out_of_discovery_is_reviewable_but_strict_blocks(repo, de
     assert moved.status == "R"
     assert moved.is_test
     assert moved.old_path == "tests/test_x.py"
+    assert cli.main(["check", "--root", str(repo), "--staged", "--no-tests",
+                     "--strict-integrity"]) == 1
     findings = tests_integrity.check(diff, str(repo))
     assert {f.rule for f in findings} == {"renamed-test", "test-path-removed"}
     assert all(f.severity == Severity.WARN for f in findings)
@@ -50,8 +56,10 @@ def test_renaming_test_out_of_discovery_is_reviewable_but_strict_blocks(repo, de
     assert next(f for f in findings if f.rule == "test-path-removed").severity == Severity.BLOCK
 
 
-def test_preserved_move_between_test_paths_is_not_strict_block(repo):
-    _git(repo, "mv", "tests/test_x.py", "tests/test_renamed.py")
+@pytest.mark.parametrize("destination", ["tests/test_renamed.py", "tests/renamed_test.py",
+                                         "test_renamed.py"])
+def test_preserved_move_between_test_paths_is_not_strict_block(repo, destination):
+    _git(repo, "mv", "tests/test_x.py", destination)
     verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
     assert verdict.passed
     assert [(f.rule, f.severity) for f in verdict.findings] == [("renamed-test", Severity.WARN)]
@@ -186,3 +194,167 @@ def test_copy_additions_still_check_skips():
     diff = Diff([DiffFile("helper.py", "C", old_path="tests/test_x.py", is_test=True,
                           language="python", added=["@pytest.mark.skip(reason='later')"])])
     assert [f.rule for f in tests_integrity.check(diff, ".")] == ["added-skip"]
+
+
+@pytest.mark.parametrize("destination", ["helper.py", "tests/helper.txt"])
+def test_test_related_helper_move_does_not_claim_discovery_loss(repo, destination):
+    _git(repo, "mv", "tests/test_x.py", "tests/helper.py")
+    _git(repo, "commit", "-qm", "helper baseline")
+    _git(repo, "mv", "tests/helper.py", destination)
+    verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert verdict.passed
+    assert [(f.rule, f.severity) for f in verdict.findings] == [("renamed-test", Severity.WARN)]
+
+
+@pytest.mark.parametrize("source,destination,loses_discovery", [
+    ("tests/x.test.ts", "tests/helper.ts", True),
+    ("tests/x.spec.js", "tests/x.spec.txt", True),
+    ("tests/x.test.ts", "tests/x.spec.tsx", False),
+    ("__tests__/x.js", "tests/helper.js", True),
+    ("__tests__/x.js", "__tests__/renamed.js", False),
+    ("tests/helper.js", "helper.js", False),
+])
+def test_js_default_discovery_move_semantics(repo, source, destination, loses_discovery):
+    (repo / source).parent.mkdir(parents=True, exist_ok=True)
+    (repo / source).write_text("test('works', () => { expect(2).toBe(2); });\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "JS baseline")
+    _git(repo, "mv", source, destination)
+    verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert verdict.passed is not loses_discovery
+    assert any(f.rule == "test-path-removed" for f in verdict.findings) is loses_discovery
+
+
+@pytest.mark.parametrize("staged", [False, True])
+@pytest.mark.parametrize("content,rule,strict_passes", [
+    ("import pytest\n@pytest.mark.skip(reason='later')\ndef test_copy():\n    assert 2 == 2\n",
+     "added-skip", False),
+    ("import os\nos._exit(0)\n", "fake-pass:sys-exit", False),
+    ("def test_copy():\n    assert 2 == 2\n", None, True),
+])
+def test_git_exact_copy_checks_complete_additions_and_cli(
+    repo, capsys, staged, content, rule, strict_passes,
+):
+    (repo / "unused_helper.py").write_text(content)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "unused source")
+    (repo / "tests/test_copy.py").write_text(content)
+    _git(repo, "add", "-A")
+    assert "C100\tunused_helper.py\ttests/test_copy.py" in _git(
+        repo, "diff", "--cached", "--name-status", "--find-copies-harder",
+    )
+    copy_patch = _git(repo, "diff", "--cached", "--find-copies-harder")
+    assert "@@" not in copy_patch  # the reproduced detector bypass
+    copied = collect_diff(str(repo), staged=staged).files[0]
+    assert copied.status == "C"
+    assert copied.added == content.splitlines()
+    assert not copied.removed
+    argv = ["check", "--root", str(repo), "--no-tests", "--strict-integrity", "--json"]
+    if staged:
+        # The destination must come from the index, not unstaged content.
+        (repo / "tests/test_copy.py").write_text("# unstaged decoy\n")
+        argv.append("--staged")
+    assert cli.main(argv) == (0 if strict_passes else 1)
+    verdict = json.loads(capsys.readouterr().out)
+    assert verdict["passed"] is strict_passes
+    assert verdict["integrity_policy"] == "strict-v1"
+    rules = {f["rule"] for f in verdict["findings"]}
+    assert not {"removed-test-fn", "removed-assert", "test-path-removed"} & rules
+    assert rules == ({rule} if rule else set())
+    assert (repo / "unused_helper.py").read_text() == content
+
+
+def test_modified_copy_checks_retained_source_content_as_additions(repo):
+    content = ("import pytest\npytestmark = pytest.mark.skip(reason='later')\n"
+               "def test_copy():\n    assert 2 == 2\n" + "# retained context\n" * 20)
+    (repo / "tests/test_x.py").write_text(content)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "copy source")
+    target = content.replace("def test_copy():\n    assert 2 == 2", "# removed in destination")
+    (repo / "helper.py").write_text(target)
+    _git(repo, "add", "-A")
+    copied = collect_diff(str(repo), staged=True).files[0]
+    assert copied.status == "C"
+    assert copied.added == target.splitlines()
+    assert not copied.removed
+    verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    assert not verdict.passed
+    assert {f.rule for f in verdict.findings} == {"added-skip"}
+
+
+@pytest.mark.parametrize("change", [
+    "import pytest\npytestmark = pytest.mark.skip(reason='later')\n",
+    "import pytest\npytestmark = [pytest.mark.skipif(True, reason='later')]\n",
+    "    pytest.xfail('later')\n",
+    "    self.skipTest('later')\n",
+])
+def test_cli_common_python_skip_forms_block(repo, capsys, change):
+    content = ("def test_x():\n" + change + "    assert 2 == 2\n" if change.startswith("    ")
+               else change + "def test_x():\n    assert 2 == 2\n")
+    (repo / "tests/test_x.py").write_text(content + "# retained context\n" * 20)
+    argv = ["check", "--root", str(repo), "--no-tests", "--json"]
+    assert cli.main(argv) == 0
+    assert json.loads(capsys.readouterr().out)["integrity_policy"] == "advisory-v1"
+    assert cli.main([*argv, "--strict-integrity"]) == 1
+    verdict = json.loads(capsys.readouterr().out)
+    assert any(f["rule"] == "added-skip" and f["severity"] == "block"
+               for f in verdict["findings"])
+
+
+def test_cli_js_test_only_blocks(repo, capsys):
+    path = repo / "tests/x.test.ts"
+    path.write_text("test('works', () => { expect(2).toBe(2); });\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "JS baseline")
+    path.write_text("test.only('works', () => { expect(2).toBe(2); });\n")
+    assert cli.main(["check", "--root", str(repo), "--no-tests", "--json",
+                     "--strict-integrity"]) == 1
+    verdict = json.loads(capsys.readouterr().out)
+    assert {f["rule"] for f in verdict["findings"]} >= {"added-skip"}
+
+
+@pytest.mark.parametrize("strict,policy", [(False, "advisory-v1"), (True, "strict-v1")])
+def test_passing_cli_json_and_signed_envelope_attest_enforced_policy(repo, capsys, strict, policy):
+    db = repo / "policy-log.db"
+    argv = ["check", "--root", str(repo), "--no-tests", "--json", "--db", str(db)]
+    if strict:
+        argv.append("--strict-integrity")
+    assert cli.main(argv) == 0
+    verdict = json.loads(capsys.readouterr().out)
+    assert verdict["passed"]
+    assert verdict["integrity_policy"] == policy
+    with sqlite3.connect(db) as connection:
+        envelope_json, entry_hash = connection.execute(
+            "SELECT envelope_json, entry_hash FROM entries",
+        ).fetchone()
+    assert entry_hash == verdict["entry_hash"]
+    predicate = json.loads(envelope_json)["predicate"]
+    assert predicate["verdict"] == "pass"
+    assert predicate["integrity_policy"] == policy
+    assert verify_chain(str(db))
+
+
+def test_failed_diff_preserves_requested_policy(tmp_path):
+    verdict = engine.check(str(tmp_path), strict_integrity=True)
+    assert not verdict.passed
+    assert verdict.as_dict()["integrity_policy"] == "strict-v1"
+
+
+@pytest.mark.parametrize("content,expected_rule", [
+    ("def helper():\n    assert True\n", "weak-assert"),
+    ("x = 1  # pragma: no cover\n" * 3, "fake-pass:coverage-disabled"),
+    ("def helper():\n    return 2\n", None),
+])
+def test_exact_copy_to_source_path_preserves_additive_signals(repo, content, expected_rule):
+    (repo / "unused_helper.py").write_text(content)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "unused source")
+    (repo / "app.py").write_text(content)
+    _git(repo, "add", "-A")
+    copied = collect_diff(str(repo), staged=True).files[0]
+    assert copied.status == "C"
+    assert not copied.is_test
+    assert copied.added == content.splitlines()
+    verdict = engine.check(str(repo), staged=True, run_tests=False, strict_integrity=True)
+    assert verdict.passed  # unrelated WARNs keep their existing advisory policy
+    assert {f.rule for f in verdict.findings} == ({expected_rule} if expected_rule else set())
