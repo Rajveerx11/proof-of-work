@@ -5,6 +5,10 @@ inputs:
     description: "Also run mutation testing (slower)."
     required: false
     default: "false"
+  strict-integrity:
+    description: "Block high-risk test skip/removal findings; no human override."
+    required: false
+    default: "false"
 runs:
   using: "composite"
   steps:
@@ -21,6 +25,7 @@ runs:
       env:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PUSH_BASE_SHA: ${{ github.event.before }}
+        STRICT_INTEGRITY: ${{ inputs.strict-integrity }}
       run: |
         case "$GITHUB_EVENT_NAME" in
           pull_request) base="$PR_BASE_SHA" ;;
@@ -43,4 +48,9 @@ runs:
         fi
         flags=""
         if [ "${{ inputs.mutation }}" = "true" ]; then flags="--mutation"; fi
+        case "$STRICT_INTEGRITY" in
+          true) flags="$flags --strict-integrity" ;;
+          false) ;;
+          *) echo "Invalid strict-integrity input (expected true/false)" >&2; exit 1 ;;
+        esac
         proof-of-work check --base "$base" $flags

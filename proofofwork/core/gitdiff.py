@@ -45,18 +45,19 @@ def _git(root: str, *args: str) -> str:
     try:
         cp = subprocess.run(
             ["git", "-c", "core.quotepath=false", *args],
-            cwd=root, capture_output=True, text=True, check=False,
-            encoding="utf-8", errors="replace",
+            cwd=root, capture_output=True, check=False,
         )
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"git unavailable: {exc}") from exc
     if cp.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {cp.stderr.strip()}")
-    return cp.stdout
+        detail = cp.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    # Universal newline translation would corrupt CR-containing NUL-delimited paths.
+    return cp.stdout.decode("utf-8", errors="surrogateescape")
 
 
 def _parse_name_status(out: str) -> list[tuple[str, str, str]]:
-    """-> [(status, path, old_path)]. status normalized to A/M/D/R."""
+    """-> [(status, path, old_path)]. status normalized to A/M/D/R/C."""
     toks = out.split("\0")
     i, files = 0, []
     while i < len(toks):
@@ -68,7 +69,7 @@ def _parse_name_status(out: str) -> list[tuple[str, str, str]]:
         if code in ("R", "C"):  # rename/copy: two paths follow
             old = toks[i + 1] if i + 1 < len(toks) else ""
             new = toks[i + 2] if i + 2 < len(toks) else ""
-            files.append(("R" if code == "R" else "A", new, old))
+            files.append((code, new, old))
             i += 3
         else:
             path = toks[i + 1] if i + 1 < len(toks) else ""
@@ -78,27 +79,61 @@ def _parse_name_status(out: str) -> list[tuple[str, str, str]]:
     return files
 
 
+def _patch_path(value: str) -> str | None:
+    """Decode Git's C-quoted patch paths (name-status paths are already NUL-delimited)."""
+    if value == "/dev/null":
+        return None
+    if value.startswith('"'):
+        raw = bytearray()
+        i = 1
+        escapes = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13}
+        while i < len(value) and value[i] != '"':
+            if value[i] != "\\":
+                raw.extend(value[i].encode("utf-8", errors="surrogateescape"))
+                i += 1
+                continue
+            i += 1
+            if value[i] in "01234567":
+                end = i + 1
+                while end < min(i + 3, len(value)) and value[end] in "01234567":
+                    end += 1
+                raw.append(int(value[i:end], 8))
+                i = end
+            else:
+                raw.extend(bytes([escapes[value[i]]]) if value[i] in escapes
+                           else value[i].encode("utf-8", errors="surrogateescape"))
+                i += 1
+        value = raw.decode("utf-8", errors="surrogateescape")
+    else:
+        # Git terminates an unquoted header containing spaces with a tab.
+        value = value.split("\t", 1)[0]
+    return value[2:] if value[:2] in ("a/", "b/") else value
+
+
 def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
     """path -> (added_lines, removed_lines), text stripped of the +/- prefix."""
     added: dict[str, list[str]] = {}
     removed: dict[str, list[str]] = {}
     old = new = key = None
+    in_hunk = False
     for line in out.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("diff --git "):
             old = new = key = None
-        elif line.startswith("--- "):
-            p = line[4:]
-            old = None if p == "/dev/null" else p[2:] if p[:2] in ("a/", "b/") else p
-        elif line.startswith("+++ "):
-            p = line[4:]
-            new = None if p == "/dev/null" else p[2:] if p[:2] in ("a/", "b/") else p
+            in_hunk = False
+        elif line.startswith("@@ "):
+            in_hunk = True
+        elif not in_hunk and line.startswith("--- "):
+            old = _patch_path(line[4:])
+        elif not in_hunk and line.startswith("+++ "):
+            new = _patch_path(line[4:])
             key = new if new is not None else old
             if key is not None:
                 added.setdefault(key, [])
                 removed.setdefault(key, [])
-        elif key is not None and line.startswith("+") and not line.startswith("+++"):
+        elif in_hunk and key is not None and line.startswith("+"):
             added[key].append(line[1:])
-        elif key is not None and line.startswith("-") and not line.startswith("---"):
+        elif in_hunk and key is not None and line.startswith("-"):
             removed[key].append(line[1:])
     return {k: (added.get(k, []), removed.get(k, [])) for k in added.keys() | removed.keys()}
 
@@ -113,15 +148,17 @@ def parse_patch(text: str) -> Diff:
     lines_by_path = _parse_unified(text)
     status: dict[str, str] = {}
     old = new = None
+    in_hunk = False
     for line in text.split("\n"):
         if line.startswith("diff --git "):
             old = new = None
-        elif line.startswith("--- "):
-            p = line[4:]
-            old = None if p == "/dev/null" else (p[2:] if p[:2] in ("a/", "b/") else p)
-        elif line.startswith("+++ "):
-            p = line[4:]
-            new = None if p == "/dev/null" else (p[2:] if p[:2] in ("a/", "b/") else p)
+            in_hunk = False
+        elif line.startswith("@@ "):
+            in_hunk = True
+        elif not in_hunk and line.startswith("--- "):
+            old = _patch_path(line[4:])
+        elif not in_hunk and line.startswith("+++ "):
+            new = _patch_path(line[4:])
             key = new if new is not None else old
             if key is not None:
                 status[key] = "A" if old is None else "D" if new is None else "M"
@@ -141,7 +178,8 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
     commit = _git(root, "rev-parse", "--verify", "--end-of-options",
                   f"{base_ref}^{{commit}}").strip()
     cached = ["--cached"] if staged else []
-    status_out = _git(root, "diff", "--name-status", "-z", *cached, commit, "--")
+    moves = ["--find-renames", "--find-copies", "--find-copies-harder"]
+    status_out = _git(root, "diff", "--name-status", "-z", *moves, *cached, commit, "--")
     # Force raw textual diffing. A changeset-controlled .gitattributes file must not
     # suppress detector input with ``-diff`` or invoke a textconv/external driver.
     unified_out = _git(
@@ -152,6 +190,7 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
         "--text",
         "--no-ext-diff",
         "--no-textconv",
+        *moves,
         *cached,
         commit,
         "--",
@@ -164,6 +203,8 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
         files.append(DiffFile(
             path=path, status=status, old_path=old_path,
             added=list(added), removed=list(removed),
-            is_test=_is_test(path), language=_language(path),
+            is_test=_is_test(path) or _is_test(old_path),
+            language=_language(path) or _language(old_path),
+            old_language=_language(old_path),
         ))
     return Diff(files=files, base_ref=base_ref)

@@ -2,8 +2,21 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from ...types import Diff, Finding, Severity
+from ..gitdiff import _is_test
+
+# Trusted caller policy only: never read enforcement settings from the candidate tree.
+STRICT_RULES = frozenset({"test-path-removed", "removed-test-fn", "added-skip", "removed-assert"})
+
+
+def apply_policy(findings: list[Finding], *, strict: bool) -> list[Finding]:
+    """Blocking-only policy; do not mutate findings supplied by the caller."""
+    return [replace(f, severity=Severity.BLOCK)
+            if strict and f.rule in STRICT_RULES and f.severity == Severity.WARN else f
+            for f in findings]
+
 
 _PY_TEST_FN = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
 _JS_TEST_FN = re.compile(r"""^\s*(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)""")
@@ -38,9 +51,16 @@ def check(diff: Diff, root: str) -> list[Finding]:
             out.append(Finding("renamed-test", Severity.WARN,
                                f"test file renamed: {f.old_path} -> {f.path}",
                                file=f.path))
+            if _is_test(f.old_path) and not _is_test(f.path):
+                out.append(Finding("test-path-removed", Severity.WARN,
+                                   "test renamed outside recognized test paths; "
+                                   "verify discovery/configuration for the new path",
+                                   file=f.path, evidence=f"{f.old_path} -> {f.path}"))
 
-        # only flag test fns that are gone, not ones edited in place (same name re-added)
-        gone = _test_fn_names(f.removed, f.language) - _test_fn_names(f.added, f.language)
+        # Copies leave the source test intact; edits with the same name are not removals.
+        gone = (set() if f.status == "C" else
+                _test_fn_names(f.removed, f.old_language or f.language)
+                - _test_fn_names(f.added, f.language))
         if gone:
             out.append(Finding("removed-test-fn", Severity.WARN,
                                f"test function(s) removed: {', '.join(sorted(gone))}",

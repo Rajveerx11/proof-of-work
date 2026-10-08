@@ -32,12 +32,13 @@ class Finding:
 @dataclass
 class DiffFile:
     path: str
-    status: str                        # "A" added | "M" modified | "D" deleted | "R" renamed
-    old_path: str = ""                 # populated for renames
+    status: str                        # A added | M modified | D deleted | R renamed | C copied
+    old_path: str = ""                 # populated for renames/copies
     added: list[str] = field(default_factory=list)     # added source lines (text, no +)
     removed: list[str] = field(default_factory=list)    # removed source lines (text, no -)
     is_test: bool = False
     language: str = ""                 # "python" | "js" | "ts" | ""
+    old_language: str = ""             # source language for renames/copies
 
 
 @dataclass

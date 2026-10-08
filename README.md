@@ -103,7 +103,37 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
   ```
 
 Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
-`--json`, `--judge`, `--db <path>`.
+`--json`, `--judge`, `--db <path>`, `--strict-integrity`.
+
+### Strict test-integrity policy
+
+The default remains advisory for integrity warnings. For a blocking gate, use
+`proof-of-work check --strict-integrity`; the Action input is
+`strict-integrity: "true"` (default `"false"`, accepted values are only `"true"`/`"false"`).
+Pin an Action revision containing this feature; the existing v0.2.0 tag predates it.
+Set the flag/input in trusted CI or caller configuration, not files controlled by the
+candidate changeset. There is no candidate-tree policy file and no human-override API.
+Turning strict mode off is an advisory run, **not** a recorded override or a strict PASS.
+
+Strict mode promotes only `added-skip`, `removed-assert`, `removed-test-fn`, and
+`test-path-removed` from WARN to BLOCK, even when re-run tests pass. The CLI/Action then
+fails with exit code 1; JSON retains the rule and blocking severity, and the signed log
+records a failing verdict with the rule ID. Other WARNs (including a preserved rename between test paths)
+remain reviewable without becoming blockers.
+
+Both source and destination paths classify Git renames/copies as test-related, including
+C-quoted paths with tabs, newlines, quotes, and Unicode. A rename outside recognized test
+paths emits `test-path-removed`, even if its content is unchanged: passing remaining tests
+does not show that the moved test is still discovered. Copies do not imply deletion of
+the intact source test; their added skip markers are still checked. A legitimate move
+between test paths with preserved assertions/functions only emits `renamed-test` WARN.
+
+These are diff/path/regex heuristics, **not proof of cheating** or proof of test discovery.
+Custom test collection, helper moves, deliberate assertion consolidation, and intentional
+skips can trigger review findings; dynamically generated tests and unsupported framework
+syntax can escape these checks. Review the discovery/configuration and changed semantics,
+then restore recognized test paths/verification or explicitly choose advisory enforcement.
+No automatic human approval or claim of fully verified override is made.
 
 Coverage bootstrap is explicit and one-time: after installing test dependencies, run
 `proof-of-work check --update-baseline` for ordinary checks, or

@@ -22,7 +22,7 @@ def _changeset_sha(diff) -> str:
     for f in diff.files:
         h.update(f.status.encode())
         h.update(b"\0")
-        h.update(f.path.encode())
+        h.update(f.path.encode("utf-8", "surrogateescape"))
         h.update(b"\0")
         for line in f.added:
             h.update(b"+" + line.encode("utf-8", "replace") + b"\n")
@@ -35,7 +35,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           run_tests: bool = True, run_mutation: bool = False, use_judge: bool = False,
           update_baseline: bool = False, db_path: str | None = None,
           coverage_drop_threshold: float = 2.0,
-          extra_findings: list[Finding] | None = None) -> Verdict:
+          extra_findings: list[Finding] | None = None,
+          strict_integrity: bool = False) -> Verdict:
     """Run the full gate against a changeset and return a fact-based Verdict."""
     from .core.detector import ALL_CHECKS
     from .core.gitdiff import _git, collect_diff
@@ -179,6 +180,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         from .judge import review
         judge_meta = review(diff)  # advisory ONLY — logged as metadata, never signed
 
+    from .core.detector.tests_integrity import apply_policy
+    findings = apply_policy(findings, strict=strict_integrity)
     passed, reasons = _decide(findings, tests, require_tests=run_tests)
     bootstrapped = None
     if passed and update_baseline:

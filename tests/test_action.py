@@ -1,5 +1,9 @@
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -33,6 +37,34 @@ def test_composite_action_uses_verified_event_base_not_shallow_checkout_history(
     assert 'proof-of-work check --base "$base"' in run
     assert 'HEAD~1' not in run
     assert 'origin/$' not in run
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Action requires bash")
+@pytest.mark.parametrize("policy,expected_code,expected_flag", [
+    ("true", 0, True), ("false", 0, False), ("invalid", 1, False),
+    ("true; echo injected", 1, False),
+])
+def test_action_strict_policy_fixture(policy, expected_code, expected_flag):
+    action_path = Path(__file__).parents[1] / "proofofwork" / "interfaces" / "action.yml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    assert action["inputs"]["strict-integrity"]["default"] == "false"
+    gate = next(step for step in action["runs"]["steps"] if step.get("name") == "Run gate")
+    assert gate["env"]["STRICT_INTEGRITY"] == "${{ inputs.strict-integrity }}"
+    script = gate["run"].replace("${{ inputs.mutation }}", "false")
+    # Platform fixture: git succeeds, the CLI echoes the exact trusted arguments.
+    prefix = 'git() { return 0; }; proof-of-work() { printf "ARG:%s\\n" "$@"; };\n'
+    # Assign in-shell as Windows bash may be WSL and not inherit Windows env vars.
+    config = ("GITHUB_EVENT_NAME=pull_request\nPR_BASE_SHA=" + "a" * 40
+              + "\nSTRICT_INTEGRITY=" + shlex.quote(policy) + "\n")
+    result = subprocess.run(
+        ["bash", "-s"], input=(prefix + config + script).encode("utf-8"),
+        capture_output=True, check=False,
+    )
+    assert result.returncode == expected_code
+    assert (b"ARG:--strict-integrity" in result.stdout) == expected_flag
+    if expected_code:
+        assert b"ARG:" not in result.stdout
+        assert b"Invalid strict-integrity" in result.stderr
 
 
 def test_release_attaches_evidence_matching_the_release_tag():
