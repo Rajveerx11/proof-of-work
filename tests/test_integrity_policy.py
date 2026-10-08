@@ -201,6 +201,16 @@ def test_object_expression_division_does_not_hide_executable_skip(value):
     assert tests_integrity._skip_evidence([source], "js") == source
 
 
+@pytest.mark.parametrize("wrapper", ["(() => { BODY })();", "(function() { BODY })();"])
+def test_expression_function_body_resumes_statement_context_after_semicolon(wrapper):
+    executable = wrapper.replace(
+        "BODY", 'const n = 1; function pattern() {} /"/.test(""); test.skip("x", () => {});')
+    benign = wrapper.replace(
+        "BODY", 'const n = 1; {} /test.skip("x", () => {})/.test("");')
+    assert tests_integrity._skip_evidence([executable], "js") == executable
+    assert tests_integrity._skip_evidence([benign], "js") is None
+
+
 def test_for_await_block_regex_cannot_hide_added_skip():
     source = ('async function pattern() { for await (const x of []) {} '
               '/"/.test(""); test.skip("x", () => {}); }')
@@ -228,6 +238,9 @@ def test_comment_opener_after_expression_prefix_stays_noncode():
     ('const re = /"/;\ntest.skip("x", () => {});\n', True),
     ('if (true) {} /"/.test(""); test.skip("x", () => {});\n', True),
     ('if (true) {} /test.skip("x", () => {})/.test("");\n', False),
+    (('(() => { const n = 1; function pattern() {} /"/.test(""); '
+      'test.skip("x", () => {}); })();\n'), True),
+    ('(() => { const n = 1; {} /test.skip("x", () => {})/.test(""); })();\n', False),
 ])
 def test_real_git_regex_context_has_signed_strict_verdict(repo, addition, blocked):
     path = repo / "tests/example.test.js"

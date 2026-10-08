@@ -108,7 +108,9 @@ def _js_code(source: str) -> str:
             expression_start = statement_start = False
         elif token == ";":
             expression_start = True
-            statement_start = not frames or frames[-1] in {("{", "block"), ("{", "switch")}
+            statement_start = not frames or frames[-1] in {
+                ("{", "block"), ("{", "switch"), ("{", "expression-block")}
+
         elif token == "?":
             ternaries.append(len(frames))
             expression_start, statement_start = True, False
