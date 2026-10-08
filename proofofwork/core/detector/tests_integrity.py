@@ -77,7 +77,8 @@ def _js_code(source: str) -> str:
         token = match.group()
         pos = match.end()
         was_statement_start = statement_start
-        if frames and frames[-1] == ("(", "for") and token in {"=", ";", ",", "in"}:
+        if (frames and frames[-1] == ("(", "for") and token in {"=", ";", ",", "in"}
+                and previous not in {".", "?."}):
             for_expressions.add(len(frames))
         declaration_kind = "block" if statement_start or not expression_start else "expression-block"
         if token == "(":

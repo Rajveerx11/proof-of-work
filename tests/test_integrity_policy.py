@@ -155,6 +155,7 @@ def test_quoted_patch_paths_and_header_like_source_lines():
     'for (of of /"/.exec("")) {}',
     'for (const [x] of /"/.exec("")) {}',
     'for (const {x} of /"/.exec("")) {}',
+    'for (obj.in of /"/.exec("") || []) {}',
     'debugger\n/"/.test("");',
     'if (true) {} /"/.test("");',
     'if (true) { if (false) {} } /"/.test("");',
@@ -190,6 +191,7 @@ def test_regex_quote_or_division_cannot_hide_added_js_skip(prefix, separator):
     r'if (true) {} /["/]test.skip("x", () => {})/.test("");',
     'if (true) {} /* / test.skip("x", () => {}); */',
     'if (true) {} // / test.skip("x", () => {});',
+    'const obj = {}; for (obj.in of /test.skip(1)/.exec("") || []) {}',
     'if (true) {} "test.skip(\\\"x\\\", () => {})";',
 ])
 def test_regex_and_string_contents_are_not_added_js_skips(source):
