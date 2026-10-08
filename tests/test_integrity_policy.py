@@ -150,6 +150,12 @@ def test_quoted_patch_paths_and_header_like_source_lines():
     'const re = /"/;', "const re = /'/;", 'const re = /["\\\']/;',
     'function pattern() { return /"/; }',
     'const quotient = left / right;',
+    'for (const x of /"/.exec("")) {}',
+    'for (const of of /"/.exec("")) {}',
+    'for (of of /"/.exec("")) {}',
+    'for (const [x] of /"/.exec("")) {}',
+    'for (const {x} of /"/.exec("")) {}',
+    'debugger\n/"/.test("");',
     'if (true) {} /"/.test("");',
     'if (true) { if (false) {} } /"/.test("");',
     'if (true) {} /* block end */ /["\\/]/.test("");',
@@ -227,6 +233,22 @@ def test_js_mask_preserves_offsets_and_added_line_provenance():
     assert code.index('test\n.skip(') == source.index('test\n.skip(')
     assert tests_integrity._skip_evidence(source.splitlines(), "js", [1, 2]) is None
     assert tests_integrity._skip_evidence(source.splitlines(), "js", [4]) == '.skip("x", () => {});'
+
+
+@pytest.mark.parametrize("prefix", ["debugger\n", "debugger /* note */\n", "debugger;"])
+def test_debugger_statement_followed_by_regex_content_is_not_a_skip(prefix):
+    source = prefix + '/test.skip("x", () => {})/.test("");'
+    assert tests_integrity._skip_evidence(source.splitlines(), "js") is None
+
+
+@pytest.mark.parametrize("source", [
+    'const ratio = object.of / test.skip("x", () => {}) / 2;',
+    'const ratio = of / test.skip("x", () => {}) / 2;',
+    'for (a = of / test.skip("x", () => {}) / 2;;) {}',
+    'const ratio = object.debugger / test.skip("x", () => {}) / 2;',
+])
+def test_contextual_identifiers_preserve_executable_division(source):
+    assert tests_integrity._skip_evidence([source], "js") == source
 
 
 def test_comment_opener_after_expression_prefix_stays_noncode():

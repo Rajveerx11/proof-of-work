@@ -137,8 +137,17 @@ def _js_code(source: str) -> str:
         elif token in {"async", "export", "default"} and statement_start:
             # Declaration prefixes must not turn function/class bodies into values.
             expression_start = True
+        elif token == "debugger" and statement_start:
+            # A debugger statement ends at its semicolon or automatic insertion;
+            # a following regex is a new expression, not division by an identifier.
+            expression_start = statement_start = True
         elif re.fullmatch(r"[\w$]+", token):
-            expression_start = (previous not in {".", "?."} and token in {
+            binding_target = (previous in {"]", "}"}
+                              or (bool(re.fullmatch(r"[\w$]+", previous))
+                                  and previous not in {"const", "let", "var", "literal"}))
+            for_of = token == "of" and bool(frames) and frames[-1] == ("(", "for") \
+                and binding_target
+            expression_start = for_of or (previous not in {".", "?."} and token in {
                 "return", "throw", "case", "yield", "await", "delete", "void", "typeof",
                 "new", "in", "instanceof", "else", "do"})
             statement_start = token in {"else", "do", "try", "finally"}
