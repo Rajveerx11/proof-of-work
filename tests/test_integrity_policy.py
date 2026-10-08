@@ -11,7 +11,7 @@ import pytest
 
 from proofofwork import engine
 from proofofwork.core import gitdiff, runner
-from proofofwork.core.detector import asserts, tests_integrity
+from proofofwork.core.detector import asserts, coverage_delta, tests_integrity
 from proofofwork.core.gitdiff import _parse_name_status, _parse_unified, collect_diff, parse_patch
 from proofofwork.interfaces import cli
 from proofofwork.log import verify_chain
@@ -144,6 +144,11 @@ def test_quoted_patch_paths_and_header_like_source_lines():
     assert parse_patch(patch).files[0].path == path
     statuses = _parse_name_status(f"R100\0tests/test_old.py\0{path}\0")
     assert statuses == [("R", path, "tests/test_old.py")]
+
+
+def test_malformed_quoted_patch_path_rejects_trailing_escape():
+    with pytest.raises(ValueError, match="unterminated escape"):
+        parse_patch('--- "a/tests/test_x.py' + "\\")
 
 
 @pytest.mark.parametrize("rule", ["added-skip", "removed-assert", "removed-test-fn",
@@ -400,6 +405,8 @@ def test_disjoint_docstring_opening_cannot_hide_added_skip(repo, suppress_blank_
 
 def test_disjoint_added_docstring_text_is_not_executable_skip(repo):
     content = _docstring_baseline(repo)
+    # Keep this integrity regression independent of optional coverage instrumentation.
+    coverage_delta.write_baseline(str(repo), 0.0)
     candidate = content.replace('Documentation line\n', "pytest.xfail('later')\n", 1).replace(
         '# original tail', '# changed tail')
     (repo / 'tests/test_x.py').write_text(candidate)

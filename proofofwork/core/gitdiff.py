@@ -123,6 +123,8 @@ def _patch_path(value: str) -> str | None:
                 i += 1
                 continue
             i += 1
+            if i >= len(value):
+                raise ValueError("unterminated escape in quoted Git path")
             if value[i] in "01234567":
                 end = i + 1
                 while end < min(i + 3, len(value)) and value[end] in "01234567":
