@@ -27,8 +27,16 @@ _PY_SKIP_CALLS = {"pytest.skip", "pytest.xfail", "self.skipTest",
                   "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
 _PY_MARKS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail"}
 _JS_SKIP = re.compile(r"(?<![\w.$])(?:it|test|describe|context)\s*\.\s*(?:skip|only)\s*\(")
-_JS_NONCODE = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\""
-                         r"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`")
+# Recognize regex literals at expression starts before interpreting their quotes
+# as string delimiters. Division must remain code, not swallow later skip calls.
+_JS_REGEX = r"/(?:\\[^\r\n]|\[(?:\\[^\r\n]|[^\]\\\r\n])*\]|[^/\\[\r\n])+/[dgimsuvy]*"
+_JS_NONCODE = re.compile(
+    r"//[^\n]*|/\*[\s\S]*?\*/|"
+    r"(?:[=(:,!&|?{};\[]\s*|(?<![\w.$])(?:return|throw|case|yield|await)\s+|^\s*)"
+    + _JS_REGEX
+    + r"|\"(?:\\[\s\S]|[^\"\\\r\n])*\"|'(?:\\[\s\S]|[^'\\\r\n])*'|`(?:\\.|[^`\\])*`",
+    re.MULTILINE,
+)
 
 
 def _skip_evidence(

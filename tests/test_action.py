@@ -1,3 +1,4 @@
+import os
 import shlex
 import shutil
 import subprocess
@@ -39,7 +40,16 @@ def test_composite_action_uses_verified_event_base_not_shallow_checkout_history(
     assert 'origin/$' not in run
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Action requires bash")
+# Windows' System32 bash shim may exist without any WSL distribution. The Action
+# uses Git Bash on Windows runners, so exercise that same executable explicitly.
+_BASH = shutil.which("bash")
+if os.name == "nt" and (git := shutil.which("git")):
+    git_bash = Path(git).resolve().parent.parent / "bin" / "bash.exe"
+    if git_bash.is_file():
+        _BASH = str(git_bash)
+
+
+@pytest.mark.skipif(_BASH is None, reason="Action requires bash")
 @pytest.mark.parametrize("policy,expected_code,expected_flag", [
     ("true", 0, True), ("false", 0, False), ("invalid", 1, False),
     ("true; echo injected", 1, False),
@@ -57,7 +67,7 @@ def test_action_strict_policy_fixture(policy, expected_code, expected_flag):
     config = ("GITHUB_EVENT_NAME=pull_request\nPR_BASE_SHA=" + "a" * 40
               + "\nSTRICT_INTEGRITY=" + shlex.quote(policy) + "\n")
     result = subprocess.run(
-        ["bash", "-s"], input=(prefix + config + script).encode("utf-8"),
+        [_BASH, "-s"], input=(prefix + config + script).encode("utf-8"),
         capture_output=True, check=False,
     )
     assert result.returncode == expected_code

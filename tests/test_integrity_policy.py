@@ -146,6 +146,42 @@ def test_quoted_patch_paths_and_header_like_source_lines():
     assert statuses == [("R", path, "tests/test_old.py")]
 
 
+@pytest.mark.parametrize("prefix", [
+    'const re = /"/;', "const re = /'/;", 'const re = /["\\\']/;',
+    'function pattern() { return /"/; }',
+    'const quotient = left / right;',
+])
+@pytest.mark.parametrize("separator", ["\n", " "])
+def test_regex_quote_or_division_cannot_hide_added_js_skip(prefix, separator):
+    source = prefix + separator + 'test.skip("x", () => {});'
+    evidence = tests_integrity._skip_evidence(source.splitlines(), "js")
+    assert evidence is not None
+    assert "test.skip(" in evidence
+
+
+@pytest.mark.parametrize("source", [
+    r'const re = /test\.skip\(/;',
+    r'function pattern() { return /test\.only\(/; }',
+    'const example = "test.skip(\\\"x\\\", () => {})";',
+])
+def test_regex_and_string_contents_are_not_added_js_skips(source):
+    assert tests_integrity._skip_evidence([source], "js") is None
+
+
+def test_real_git_regex_quote_does_not_allow_signed_strict_pass(repo):
+    path = repo / "tests/example.test.js"
+    path.write_text('test("honest", () => {});\n')
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "JavaScript test baseline")
+    path.write_text(path.read_text() + 'const re = /"/;\ntest.skip("x", () => {});\n')
+    verdict = engine.check(str(repo), run_tests=False, strict_integrity=True)
+    assert not verdict.passed
+    assert verdict.integrity_policy == "strict-v1"
+    assert verdict.entry_hash
+    assert verify_chain(str(repo / engine.DEFAULT_DB))
+    assert ("added-skip", Severity.BLOCK) in {(f.rule, f.severity) for f in verdict.findings}
+
+
 def test_malformed_quoted_patch_path_rejects_trailing_escape():
     with pytest.raises(ValueError, match="unterminated escape"):
         parse_patch('--- "a/tests/test_x.py' + "\\")
