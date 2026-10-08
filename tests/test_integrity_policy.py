@@ -168,6 +168,16 @@ def test_regex_and_string_contents_are_not_added_js_skips(source):
     assert tests_integrity._skip_evidence([source], "js") is None
 
 
+def test_object_expression_division_does_not_hide_executable_skip():
+    source = 'const n = {} / test.skip("x", () => {}) / 2;'
+    assert tests_integrity._skip_evidence([source], "js") == source
+
+
+def test_comment_opener_after_expression_prefix_stays_noncode():
+    source = 'const n = /* / documentation\ntest.skip("x", () => {});\n*/ 1;'
+    assert tests_integrity._skip_evidence(source.splitlines(), "js") is None
+
+
 def test_real_git_regex_quote_does_not_allow_signed_strict_pass(repo):
     path = repo / "tests/example.test.js"
     path.write_text('test("honest", () => {});\n')
