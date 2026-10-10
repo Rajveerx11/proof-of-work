@@ -37,7 +37,7 @@ judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-ke
 dev = [
     "pytest>=8",
     "coverage==7.13.5",
-    "ruff==0.16.8",
+    "ruff==0.16.10",
 ]
 
 [project.scripts]
