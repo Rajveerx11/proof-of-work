@@ -146,12 +146,17 @@ def run_task(
     agent_timeout_seconds: int = 600,
     agent_label: str | None = None,
     model_label: str | None = None,
+    untrusted: bool = False,
 ) -> EvalResult:
     """Run a task with a CLI-selected agent argv containing exactly `{workspace}`.
 
     YAML never controls the agent executable. The task's outcome command is executed
     as an argv list with no shell, in a new temporary copy of the reviewed fixture.
     """
+    if type(untrusted) is not bool:
+        raise ValueError("untrusted must be an explicit bool")
+    if untrusted:
+        raise ValueError("untrusted eval is unsupported: agent, gate and verifier are not all isolated")
     argv = _agent_argv(agent_argv)
     if not isinstance(agent_timeout_seconds, int) or not 1 <= agent_timeout_seconds <= 3600:
         raise ValueError("agent_timeout_seconds must be an integer from 1 to 3600")

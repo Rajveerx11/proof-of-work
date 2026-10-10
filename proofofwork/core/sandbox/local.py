@@ -1,8 +1,7 @@
-"""Local subprocess sandbox — the v1 isolation driver.
+"""Trusted-local subprocess executor, NOT a security sandbox.
 
-ponytail: subprocess is v1 isolation. Run from the committed tree, it isolates the
-suite against uncommitted tampering (the agent can't reach outside argv/cwd/env here).
-Docker/microVM is the v2 driver behind this same `Sandbox` Protocol — swap via get_sandbox.
+Commands inherit host environment and can access host files and network. Keep this
+backend for reviewed code only; snapshot fidelity does not provide containment.
 """
 from __future__ import annotations
 

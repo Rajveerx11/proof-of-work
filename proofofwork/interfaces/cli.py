@@ -17,12 +17,17 @@ def _cmd_check(args: argparse.Namespace) -> int:
     verdict = engine.check(
         root=args.root,
         base_ref=args.base,
+        suite_base=args.suite_base,
         staged=args.staged,
         run_tests=not args.no_tests,
         run_mutation=args.mutation,
         use_judge=args.judge,
         update_baseline=args.update_baseline,
         db_path=args.db,
+        coverage_policy=args.coverage_policy,
+        integrity_policy=args.integrity_policy,
+        sandbox_kind=args.sandbox,
+        sandbox_image=args.sandbox_image,
     )
 
     if args.json:
@@ -90,6 +95,8 @@ def _cmd_eval_run(args: argparse.Namespace) -> int:
     )
 
     try:
+        if args.untrusted:
+            raise ValueError("untrusted eval is unsupported: agent, gate and verifier are not all isolated")
         invocation = build_agent_invocation(
             args.agent,
             generic_argv_json=args.agent_argv_json,
@@ -317,8 +324,18 @@ def _build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("check", help="run the gate on a changeset")
     c.add_argument("--root", default=".")
     c.add_argument("--base", default="HEAD")
+    c.add_argument("--suite-base", default=None,
+                   help="explicit reviewed ref for .proofofwork/suites.json (commit-pinned)")
     c.add_argument("--staged", action="store_true")
-    c.add_argument("--no-tests", action="store_true", help="skip re-running the suite")
+    c.add_argument("--no-tests", action="store_true", help="detector-only evidence; no test/coverage pass")
+    c.add_argument("--coverage-policy", choices=("required", "test-only"), default="required",
+                   help="required coverage (default) or explicit NOT-verified test-only evidence")
+    c.add_argument("--integrity-policy", choices=("strict", "advisory"), default="strict",
+                   help="strict blocking (default); advisory is not a human override")
+    c.add_argument("--sandbox", choices=("local", "docker"), default="local",
+                   help="local is trusted-only; docker currently fails closed pending integration")
+    c.add_argument("--sandbox-image", default=None,
+                   help="operator-selected image; currently unavailable for gate execution")
     c.add_argument("--mutation", action="store_true")
     c.add_argument("--judge", action="store_true", help="add advisory LLM hints (BYO key)")
     c.add_argument("--update-baseline", action="store_true")
@@ -369,6 +386,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "use only for reviewed fixtures in an isolated environment"
         ),
     )
+    er.add_argument("--untrusted", action="store_true",
+                    help="refuse untrusted eval until every execution stage is isolated")
     er.add_argument("--agent-timeout", type=int, default=600)
     er.add_argument("--db", default=DEFAULT_HISTORY_DB, help="SQLite eval history path")
     er.add_argument("--no-record", action="store_true", help="do not persist this run")

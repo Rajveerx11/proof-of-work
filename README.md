@@ -80,7 +80,8 @@ git diff ──▶ deterministic checks ──▶ re-run real tests ──▶ co
 | Signal | Severity | How |
 |---|---|---|
 | Deleted test file, fake-pass exit (`sys.exit(0)`, `process.exit(0)`), coverage drop vs baseline, function-under-test mocked away | **block** (fails the verdict) | deterministic detector |
-| Weakened or removed asserts, added `skip`/`only`/`xfail`, renamed test, surviving mutants | **warn** (surfaced, does not fail alone) | deterministic detector |
+| Weakened/removed asserts, removed test functions, added `skip`/`only`/`xfail`, loss of test discovery on rename | **block** under source-tree strict policy (v0.2.0: warn) | deterministic heuristics + policy |
+| Preserved test rename, surviving mutants | **warn** (does not fail alone) | deterministic detector |
 | Real tests fail on a clean re-run | **block** | test runner |
 | "Does this diff weaken verification or miss the task?" | metadata only | LLM judge (advisory, bring your own key) |
 
@@ -102,8 +103,31 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
       mutation: "false"   # optional: also run mutation testing (slower)
   ```
 
-Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
-`--json`, `--judge`, `--db <path>`.
+Flags: `--staged`, `--base <ref>`, `--suite-base <reviewed-ref>`, `--no-tests`,
+`--mutation`, `--update-baseline`, `--json`, `--judge`, `--db <path>`.
+
+**Unreleased source-tree hardening:** checks now default to `--coverage-policy required`
+and `--integrity-policy strict`. Required coverage blocks missing/stale/invalid reports
+and missing or incompatible trusted baselines. Strict integrity blocks recognized
+skip/focus additions, removed/weakened assertions, and loss of default test discovery.
+These changes are not included in the `v0.2.0` tag shown above. See
+[coverage policy and migration](docs/coverage-policy.md) and
+[integrity policy and heuristic limits](docs/integrity-policy.md).
+
+A trusted operator can explicitly select `--coverage-policy test-only` only without
+an existing trusted baseline, or `--integrity-policy advisory`; both modes are labeled
+in JSON and signed evidence. Advisory is not human approval. Protect policy selection
+in trusted CI; an agent-controlled launcher cannot authorize its own opt-out.
+`--no-tests` produces detector-only evidence and cannot be combined with mutation.
+Local execution remains trusted-only. The [experimental Docker backend](docs/isolation.md)
+is not integrated or live-validated: `check --sandbox docker` fails closed without
+local fallback, and `eval run --untrusted` is rejected before execution.
+
+The source-tree CLI/API also supports [reviewed configured suites](docs/configured-suites.md)
+for custom commands and multiple package roots. This bounded mode requires an explicit
+`--suite-base` and `--coverage-policy test-only`, runs every required suite, and reports exit-code execution evidence,
+not full candidate attestation. Coverage baselines and bootstrap are unsupported and
+fail closed; the following coverage behavior describes the legacy unconfigured runner.
 
 Coverage bootstrap is explicit and one-time: after installing test dependencies, run
 `proof-of-work check --update-baseline` for ordinary checks, or
