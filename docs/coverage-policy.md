@@ -215,3 +215,27 @@ does not classify manifests as Python source for detectors or authorize dependen
 reuse: changed dependency inputs still require an independently reviewed committed
 coverage floor instead of measuring the base with candidate dependencies. Nested
 manifests and other dependency managers are not inferred by this root-only rule.
+
+## Reviewing this repository's committed floor
+
+Dependency updates must compare against a floor measured independently from an
+already reviewed `main` commit. Provision that exact commit in a separate clean
+checkout with its own Python 3.12 environment using `uv sync --frozen --extra dev`.
+Do not reuse the dependency update's environment, editable installation, or Python
+path. Run the source commit's real Python coverage runner, require passing test
+execution and complete line coverage, and retain its report and execution witness.
+
+Review the measurement's source commit and tree, lockfile digest, installed Python,
+pytest and coverage versions, executed commands, test results, line totals and
+report digest before adopting the floor. The provenance record is review evidence;
+the engine enforces the baseline's `coverage`, `metric` and `languages` fields, not
+environment attestation. An instrumentation upgrade needs its own comparability
+review; a lower candidate measurement cannot authorize replacing the floor.
+
+The adoption change must pass the existing required-coverage self-check against
+its immutable base. When that base has no committed floor, explicit base measurement
+provides the comparison; candidate baseline bytes never authorize the adoption
+change's own result. After adoption merges, dependency updates read the reviewed
+floor from their immutable base and execute the required Python suite. Keep
+dependency-mismatch rejection, strict integrity checks and coverage thresholds
+unchanged throughout this sequence.
