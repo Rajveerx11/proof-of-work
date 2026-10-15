@@ -9,6 +9,10 @@ inputs:
     description: "required (default), or explicit test-only evidence with no trusted baseline."
     required: false
     default: "required"
+  measure-base-coverage:
+    description: "Measure an absent baseline at the frozen base; requires matching dependencies."
+    required: false
+    default: "false"
   integrity-policy:
     description: "strict (default), or advisory; advisory is not a human approval."
     required: false
@@ -31,6 +35,7 @@ runs:
         PUSH_BASE_SHA: ${{ github.event.before }}
         MUTATION: ${{ inputs.mutation }}
         COVERAGE_POLICY: ${{ inputs.coverage-policy }}
+        MEASURE_BASE_COVERAGE: ${{ inputs.measure-base-coverage }}
         INTEGRITY_POLICY: ${{ inputs.integrity-policy }}
       run: |
         case "$GITHUB_EVENT_NAME" in
@@ -55,6 +60,7 @@ runs:
         case "$COVERAGE_POLICY" in required|test-only) ;; *) echo "Invalid coverage policy" >&2; exit 1 ;; esac
         case "$INTEGRITY_POLICY" in strict|advisory) ;; *) echo "Invalid integrity policy" >&2; exit 1 ;; esac
         flags=()
+        case "${MEASURE_BASE_COVERAGE:-false}" in true) flags+=(--measure-base-coverage) ;; false) ;; *) echo "Invalid base measurement input" >&2; exit 1 ;; esac
         case "$MUTATION" in true) flags+=(--mutation) ;; false) ;; *) echo "Invalid mutation input" >&2; exit 1 ;; esac
         proof-of-work check --base "$base" --coverage-policy "$COVERAGE_POLICY" \
           --integrity-policy "$INTEGRITY_POLICY" "${flags[@]}"
