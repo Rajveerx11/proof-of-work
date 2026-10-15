@@ -38,6 +38,8 @@ class DiffFile:
     removed: list[str] = field(default_factory=list)    # removed source lines (text, no -)
     is_test: bool = False
     language: str = ""                 # "python" | "js" | "ts" | ""
+    candidate_lines: list[str] | None = None  # full Git candidate; None for stored fragments
+    added_line_numbers: list[int] = field(default_factory=list)  # 1-based Git LF rows
 
 
 @dataclass

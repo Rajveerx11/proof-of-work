@@ -1,7 +1,8 @@
 """Parse a git changeset into the frozen Diff/DiffFile contract via git plumbing.
 
-`--name-status -z` supplies authoritative statuses/rename/copy paths; `--unified=0`
-supplies changed lines. Copies also use a no-renames patch for the entire destination.
+`--name-status -z` supplies authoritative statuses/rename/copy paths. Full-context
+patches supply candidate lexical context and added-line coordinates. Copies also
+use a no-renames patch for the entire destination; staged diffs use only the index.
 """
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ import re
 import subprocess
 
 from ..types import Diff, DiffFile
+
+_FULL_CONTEXT = "--unified=2147483647"
 
 _TEST_DIR_MARKERS = ("/tests/", "/test/", "/__tests__/")
 _LANG = {
@@ -132,18 +135,30 @@ def _patch_path(value: str) -> str | None:
     return value[2:] if value[:2] in ("a/", "b/") else value
 
 
-def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
-    """path -> (added_lines, removed_lines), text stripped of the +/- prefix."""
+def _parse_unified(
+    out: str, *, context: dict[str, tuple[list[str], list[int]]] | None = None,
+) -> dict[str, tuple[list[str], list[str]]]:
+    """path -> (added, removed); optionally capture full-context candidate + positions.
+
+    Only full-context Git patches may supply ``context``. Partial corpus patches
+    still use the original added/removed-only contract.
+    """
     added: dict[str, list[str]] = {}
     removed: dict[str, list[str]] = {}
     old = new = key = None
     in_hunk = False
+    new_line = 0
     for line in out.split("\n"):
         if line.startswith("diff --git "):
             old = new = key = None
             in_hunk = False
         elif line.startswith("@@ "):
             in_hunk = True
+            if context is not None:
+                match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+                if match is None:
+                    raise ValueError("invalid Git hunk coordinates")
+                new_line = int(match.group(1))
         elif not in_hunk and line.startswith("--- "):
             old = _patch_path(line[4:])
         elif not in_hunk and line.startswith("+++ "):
@@ -152,10 +167,19 @@ def _parse_unified(out: str) -> dict[str, tuple[list[str], list[str]]]:
             if key is not None:
                 added.setdefault(key, [])
                 removed.setdefault(key, [])
+                if context is not None:
+                    context.setdefault(key, ([], []))
         elif in_hunk and key is not None and line.startswith("+"):
             added[key].append(line[1:])
+            if context is not None:
+                context[key][0].append(line[1:])
+                context[key][1].append(new_line)
+                new_line += 1
         elif in_hunk and key is not None and line.startswith("-"):
             removed[key].append(line[1:])
+        elif in_hunk and key is not None and line.startswith(" ") and context is not None:
+            context[key][0].append(line[1:])
+            new_line += 1
     return {k: (added.get(k, []), removed.get(k, [])) for k in added.keys() | removed.keys()}
 
 
@@ -206,7 +230,7 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
     unified_out = _git(
         root,
         "diff",
-        "--unified=0",
+        _FULL_CONTEXT,
         "--no-color",
         "--text",
         "--no-ext-diff",
@@ -217,14 +241,17 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
         "--",
     )
 
-    lines_by_path = _parse_unified(unified_out)
+    context: dict[str, tuple[list[str], list[int]]] = {}
+    lines_by_path = _parse_unified(unified_out, context=context)
     statuses = _parse_name_status(status_out)
-    # Copy patches may have no hunks. Inspect the entire NEW destination as additions,
-    # not removals from the still-existing source. --cached never reads dirty text.
+    # A C100 patch contains no source lines. A copy introduces all destination
+    # content, not just the edits relative to the still-existing source. Diffing
+    # without move detection also respects --cached and Git's raw-text safeguards.
+    copy_context: dict[str, tuple[list[str], list[int]]] = {}
     copies = (_parse_unified(_git(
-        root, "diff", "--unified=0", "--no-color", "--text", "--no-ext-diff",
+        root, "diff", _FULL_CONTEXT, "--no-color", "--text", "--no-ext-diff",
         "--no-textconv", "--no-renames", *cached, commit, "--",
-    )) if any(status == "C" for status, _, _ in statuses) else {})
+    ), context=copy_context) if any(status == "C" for status, _, _ in statuses) else {})
     files: list[DiffFile] = []
     for status, path, old_path in statuses:
         added, removed = (copies.get(path, ([], [])) if status == "C" else
@@ -234,5 +261,7 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
             added=list(added), removed=list(removed),
             is_test=_is_test(path) or _is_test(old_path),
             language=_language(path) or _language(old_path),
+            candidate_lines=(copy_context if status == "C" else context).get(path, (None, []))[0],
+            added_line_numbers=(copy_context if status == "C" else context).get(path, (None, []))[1],
         ))
     return Diff(files=files, base_ref=base_ref, base_commit=commit)

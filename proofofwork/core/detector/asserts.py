@@ -23,7 +23,7 @@ def check(diff: Diff, root: str) -> list[Finding]:
                                    evidence=ln.strip()))
                 break
 
-        if not f.is_test:
+        if not f.is_test or f.status == "C":
             continue
         removed = sum(1 for ln in f.removed if _ASSERT_LINE.search(ln))
         added = sum(1 for ln in f.added if _ASSERT_LINE.search(ln))
