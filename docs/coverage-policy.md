@@ -180,13 +180,17 @@ or configured exit-code suites. Its native execution is trusted-local, not hosti
 code isolation. The base uses the launcher's installed Python dependencies and
 copied installed JS dependencies only when recognized dependency inputs match the
 frozen tree byte-for-byte, including uncommitted changes and nested manifests.
-Python manifests/locks/requirements (including recursive local pip requirement and
-constraint includes, build-system requirements and all PEP735 dependency groups) and JS manifests/locks/manager
-configuration are compared. Group includes are validated recursively; local helper
-references in any group and missing/cyclic/ambiguous includes fail closed.
-Remote, linked, escaping or cyclic pip includes and dynamic/custom/local Python
-dependency sources require independent base provisioning. Changed inputs fail closed: install and measure the reviewed base
-independently and review a committed baseline before comparing that candidate.
+Python reuse supports static root `pyproject.toml` plus a matching `uv.lock`, or
+fixtures without declared dependency manifests. Supported metadata includes PEP621
+project/optional dependencies, PEP735 groups and registry build requirements. Group
+includes are validated recursively; local helpers and missing/cyclic/ambiguous
+includes fail closed. Lock sources must be HTTPS registries or the project's own
+root editable package; referenced lock artifacts must use HTTPS. Other editable,
+directory, path or local artifact entries require independent base provisioning.
+Requirements files, nested manifests, standalone `uv.toml`, custom manager settings,
+in-tree build backends and dynamic dependency declarations are unsupported in this
+optional mode. Changed inputs fail closed: provision the reviewed base independently
+and review a committed baseline before comparing that candidate.
 This check does not attest installed packages against their lockfile; launchers
 must provision their trusted environment from that lock with artifact verification.
 
@@ -207,3 +211,10 @@ and dependency mismatch rejection. Run it locally with Node 24/npm and:
 ```bash
 uv run --frozen --extra dev python -m pytest -q integration/test_js_coverage.py
 ```
+
+The allowed tool tables for Python reuse are pytest, Ruff, coverage, Black, isort,
+mypy, pyright, and static Hatch wheel-package selection. Other custom tool layouts
+require independent base provisioning; no pip directive parser or alternative
+manager inference is attempted. This bounded static-input check does not attest
+arbitrary build code or installed artifacts. Default stored-baseline checks are
+unchanged.
