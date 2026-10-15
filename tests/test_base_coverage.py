@@ -213,3 +213,16 @@ def test_unbounded_or_malformed_dependency_groups_fail_closed(tmp_path, groups):
     put(tmp_path / 'pyproject.toml', '[dependency-groups]\n' + groups + '\n')
     with pytest.raises((ValueError, TypeError)):
         engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('dependency,allowed', [('hatchling>=1', True),
+                                               ('helper @ ./local-helper', False),
+                                               ('helper@file:helper.whl', False)])
+def test_build_system_requirements_cannot_reuse_candidate_helpers(tmp_path, dependency, allowed):
+    put(tmp_path / 'pyproject.toml', f'[build-system]\nrequires=["{dependency}"]\n'
+        'build-backend="helper"\n')
+    if allowed:
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+    else:
+        with pytest.raises(ValueError, match='independent base provisioning'):
+            engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})

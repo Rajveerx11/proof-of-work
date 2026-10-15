@@ -552,6 +552,7 @@ def _include_python_dependency_inputs(root: Path, found: dict[str, bytes]) -> No
                     or tool.get("poetry") or tool.get("pdm")):
                 raise ValueError("custom Python dependency sources require independent base provisioning")
             dependencies = list(metadata.get("dependencies", ()))
+            dependencies.extend(project.get("build-system", {}).get("requires", ()))
             for values in metadata.get("optional-dependencies", {}).values():
                 dependencies.extend(values)
             dependencies.extend(_python_group_dependencies(project.get("dependency-groups", {})))
