@@ -101,6 +101,9 @@ class Verdict:
     execution_mode: str = "detector-only"
     coverage_status: str = "not-run"   # verified | not-verified | not-run
 
+    coverage_baseline_source: str = ""  # measured:<immutable commit> or trusted baseline source
+    coverage_baseline_measurements: dict[str, float] = field(default_factory=dict)
+
     def as_dict(self) -> dict:
         return {
             "passed": self.passed,
@@ -109,6 +112,8 @@ class Verdict:
             "tests": self.tests.__dict__,
             "mutation": self.mutation.__dict__,
             "coverage_baseline": self.coverage_baseline,
+            "coverage_baseline_source": self.coverage_baseline_source,
+            "coverage_baseline_measurements": self.coverage_baseline_measurements,
             "judge": self.judge,
             "entry_hash": self.entry_hash,
             "coverage_policy": self.coverage_policy,
