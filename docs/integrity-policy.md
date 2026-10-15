@@ -76,30 +76,29 @@ silently disable the gate. Validate Action/CLI mode input at the trusted boundar
 
 ## Heuristic limits and types handoff
 
-The current `DiffFile` has `old_path`, `status`, `added`, `removed`, `is_test` and
-`language`. No new fields, dynamic attributes or type edits were made. Runtime `C`
-is supported by its existing string status; the manager should update the type's
-status/old-path documentation to include copies when that file is owned.
+`DiffFile` preserves source/destination paths, copy status, and optional complete
+candidate source lines with 1-based Git LF coordinates for additions. Real Git
+checks populate that context from full-context raw-text patches. Staged checks
+use the index, never dirty working-tree text. Exact copies inspect complete new
+destination contents. Stored/hand-built partial patches retain fragment analysis.
 
-Function-removal and skip checks inspect **changed-line fragments**, not complete
-before/after files. Python comments/complete string examples are masked using
-stdlib tokenization; declared encoding/BOM handling is possible only when that
-context is present in the fragment. Missing encoding produces an explicit
-`integrity-analysis-incomplete` signal. Complete tokens before incomplete fragment
-syntax are retained because hunks need not be complete programs. Arbitrary omitted
-string/docstring/decorator context and tokens split across separate hunks cannot
-be reconstructed reliably. JS masking excludes ordinary comments, strings and
-simple regex contexts, respects LF/CR/U+2028/U+2029, and excludes unrelated `.` /
-`?.` receivers across whitespace/comments. Templates remain opaque; ambiguous
-regex/division contexts, aliases, shadowed names, computed calls and dynamic
-collection are not resolved. These checks are not full parsers.
+Skip checks tokenize the complete candidate and require a marker token on an
+added line, preventing disjoint docstring hunks from hiding an executable skip or
+flagging a documentation example. Python encoding/BOM handling is preserved;
+unreadable source emits `integrity-analysis-incomplete`. Function-removal checks
+still compare changed-line fragments, so omitted original lexical context remains
+a limitation. JS masking distinguishes statement blocks from expression values,
+regex literals from division, and contextual `for...of` from identifiers/property
+names, and recognizes statement boundaries for jumps, debugger and static module
+declarations. Added-marker provenance uses executable tokens, so comment-only
+changes within an existing multiline skip do not become new findings. The scanner
+preserves line terminators and ignores unrelated `.`/`?.` receivers
+across whitespace/comments. Templates remain opaque; aliases, shadowed bindings,
+computed calls, unsupported syntax and configured collection remain unresolved.
+These are heuristics, not complete parsers or proof of cheating.
 
-For full-context accuracy the manager must extend the shared contract with
-optional original/candidate source lines and changed-line coordinates (plus source
-language if desired), populate them from a full-context **Git** patch for the
-correct base/index snapshot, then migrate the lexical consumers. Do not read a
-dirty worktree as a substitute for staged context. That type integration is
-outside this worker's ownership and has not been implemented.
+Full-context patch collection can cost more for large changed files; performance
+optimization must preserve index provenance and complete lexical context.
 
 The assertion detector is also outside ownership: this policy promotes its
 existing `weak-assert`/`removed-assert` findings; it does not make those detectors

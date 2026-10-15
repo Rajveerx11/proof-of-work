@@ -1,11 +1,10 @@
 """Real Git -> engine -> real pytest -> signed-log integrity-policy gates.
 
-These cover recognized patch syntax, not complete semantic integrity or intent.
-Skip masking can exclude complete comments/strings, but fragments omit arbitrary
-before/after docstring, decorator and encoding context. The assertion detector
-still counts raw text: assertion replacements by comments/strings and removal of
-docstring examples are NOT proven safe here. Full-source lexical integration is
-manager-owned. Detector-only PASS never claims that candidate tests executed.
+These cover recognized syntax, not complete semantic integrity or intent. Real
+Git skip checks use full candidate context; stored fragments still omit arbitrary
+lexical context. The assertion detector counts raw text: assertion replacements
+by comments/strings and removal of docstring examples are not proven safe here.
+Detector-only PASS never claims that candidate tests executed.
 """
 from __future__ import annotations
 
