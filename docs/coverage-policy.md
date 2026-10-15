@@ -229,6 +229,18 @@ manifests and other dependency managers are not inferred by this root-only rule.
 
 ## Reviewing this repository's committed floor
 
+The adopted [baseline](../.proofofwork/baseline.json) is exactly
+`92.56814921090387%`: 6,452 covered lines out of 6,970 statements, measured from
+reviewed main commit `993580776f53b9bdc21fd34fd75c953264ae386e`. The independent run
+passed 927 tests with 7 platform-specific skips. Its unmodified
+[provenance record](coverage-baseline-provenance.json),
+[coverage report](../reports/coverage-baseline/coverage.json),
+[execution witness](../reports/coverage-baseline/executed.json), and
+[test output](../reports/coverage-baseline/command-3.stdout.txt) record the source
+and evidence used for review. Artifact hashes in the provenance retain their
+original filenames; the binary coverage database and empty command logs are not
+committed. Absolute paths identify the original independent measurement checkout.
+
 Dependency updates must compare against a floor measured independently from an
 already reviewed `main` commit. Provision that exact commit in a separate clean
 checkout with its own Python 3.12 environment using `uv sync --frozen --extra dev`.
