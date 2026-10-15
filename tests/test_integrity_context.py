@@ -24,7 +24,7 @@ def repo(tmp_path):
     _git(tmp_path, "config", "user.name", "test")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests/test_x.py").write_text(
-        "def test_x():\n    assert 1 == 1\n\n" + "# retained context\n" * 20,
+        "def test_x():\n    assert sum([1, 2]) == 3\n\n" + "# retained context\n" * 20,
         encoding="utf-8",
     )
     _git(tmp_path, "add", "-A")
@@ -174,8 +174,8 @@ def _docstring_baseline(repo, *, existing_skip=False):
     content = ('"""\n' + 'Documentation line\n' * 12 + '"""\nimport pytest\n\n'
                + '# unchanged gap\n' * 12
                + ("@pytest.mark.skip(reason='later')\n" if existing_skip else '')
-               + 'def test_x():\n    assert 1 == 1\n\n'
-               + 'def test_y():\n    assert 2 == 2\n# original tail\n')
+               + 'def test_x():\n    assert sum([1, 2]) == 3\n\n'
+               + 'def test_y():\n    assert sorted([2, 1]) == [1, 2]\n# original tail\n')
     (repo / 'tests/test_x.py').write_text(content)
     _git(repo, 'add', '-A')
     _git(repo, 'commit', '-qm', 'docstring baseline')
@@ -283,7 +283,7 @@ def test_js_added_string_duplicate_of_unchanged_skip_is_not_added_skip(repo):
 @pytest.mark.parametrize("staged", [False, True])
 def test_python_universal_newlines_preserve_added_git_coordinates(repo, newline, staged):
     path = repo / "tests/test_x.py"
-    baseline = newline.join([b"import pytest", b"def test_x():", b"    assert 1 == 1", b""])
+    baseline = newline.join([b"import pytest", b"def test_x():", b"    assert sum([1, 2]) == 3", b""])
     path.write_bytes(baseline)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "newline baseline")

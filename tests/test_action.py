@@ -49,12 +49,14 @@ if os.name == "nt" and (git := shutil.which("git")):
         _BASH = str(git_bash)
 
 
-@pytest.mark.skipif(_BASH is None, reason="Action requires bash")
 @pytest.mark.parametrize("policy,expected_code,expected_flag", [
     ("strict", 0, True), ("advisory", 0, False), ("invalid", 1, False),
     ("strict; echo injected", 1, False),
 ])
 def test_action_strict_policy_fixture(policy, expected_code, expected_flag):
+    assert _BASH is not None, (
+        "Action integration requires Bash: install bash on Linux/macOS or Git for Windows."
+    )
     action_path = Path(__file__).parents[1] / "proofofwork" / "interfaces" / "action.yml"
     action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
     assert action["inputs"]["integrity-policy"]["default"] == "strict"
