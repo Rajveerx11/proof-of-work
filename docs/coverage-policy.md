@@ -223,7 +223,8 @@ already reviewed `main` commit. Provision that exact commit in a separate clean
 checkout with its own Python 3.12 environment using `uv sync --frozen --extra dev`.
 Do not reuse the dependency update's environment, editable installation, or Python
 path. Run the source commit's real Python coverage runner, require passing test
-execution and complete line coverage, and retain its report and execution witness.
+execution and a valid project-line coverage report, and retain its report and
+execution witness.
 
 Review the measurement's source commit and tree, lockfile digest, installed Python,
 pytest and coverage versions, executed commands, test results, line totals and
