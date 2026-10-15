@@ -554,8 +554,45 @@ def _include_python_dependency_inputs(root: Path, found: dict[str, bytes]) -> No
             dependencies = list(metadata.get("dependencies", ()))
             for values in metadata.get("optional-dependencies", {}).values():
                 dependencies.extend(values)
+            dependencies.extend(_python_group_dependencies(project.get("dependency-groups", {})))
             if any(local_reference(value) for value in dependencies):
                 raise ValueError("local Python dependency sources require independent base provisioning")
+
+
+def _python_group_dependencies(groups: dict) -> list[str]:
+    """Validate every PEP735 group, including normalized recursive references."""
+    import re
+
+    def normalize(name):
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    normalized = {normalize(name): values for name, values in groups.items()}
+    if len(normalized) != len(groups):
+        raise ValueError("ambiguous Python dependency group names")
+    active, seen, dependencies = set(), set(), []
+
+    def include_group(name):
+        if name not in normalized or name in active:
+            raise ValueError("missing or cyclic Python dependency group include")
+        if name in seen:
+            return
+        active.add(name)
+        if not isinstance(normalized[name], list):
+            raise TypeError("Python dependency groups must contain dependency lists")
+        for entry in normalized[name]:
+            if isinstance(entry, str):
+                dependencies.append(entry)
+            elif (isinstance(entry, dict) and set(entry) == {"include-group"}
+                  and isinstance(entry["include-group"], str)):
+                include_group(normalize(entry["include-group"]))
+            else:
+                raise ValueError("unsupported Python dependency group entry")
+        active.remove(name)
+        seen.add(name)
+
+    for name in normalized:
+        include_group(name)
+    return dependencies
 
 
 def _run_configured_tests(root: str, suites: list[dict], commit: str, *,

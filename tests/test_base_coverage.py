@@ -182,3 +182,34 @@ def test_compact_local_python_references_are_rejected(tmp_path, dependency, mani
     else:
         with pytest.raises(ValueError, match='independent base provisioning'):
             engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('dependency', ['helper @ ./helper', 'helper@file:helper.whl',
+                                      'helper@../helper', 'helper@/absolute'])
+@pytest.mark.parametrize('included', [False, True])
+def test_dependency_groups_cannot_reuse_candidate_local_helpers(tmp_path, dependency, included):
+    content = f'[dependency-groups]\nhelpers=["{dependency}"]\n'
+    if included:
+        content += 'dev=[{include-group="helpers"}]\n'
+    put(tmp_path / 'pyproject.toml', content)
+    with pytest.raises(ValueError, match='independent base provisioning'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+def test_registry_dependency_groups_and_normalized_includes_are_supported(tmp_path):
+    put(tmp_path / 'pyproject.toml', '[dependency-groups]\nTest_Helpers=["pytest>=8"]\n'
+        'dev=[{include-group="test-helpers"},"coverage==7.13.5"]\n')
+    engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('groups', [
+    'dev=[{include-group="missing"}]',
+    'dev=[{include-group="helpers"}]\nhelpers=[{include-group="dev"}]',
+    'dev=[{path="helper"}]',
+    'dev="pytest"',
+    'Test_Helpers=[]\ntest-helpers=[]',
+])
+def test_unbounded_or_malformed_dependency_groups_fail_closed(tmp_path, groups):
+    put(tmp_path / 'pyproject.toml', '[dependency-groups]\n' + groups + '\n')
+    with pytest.raises((ValueError, TypeError)):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})

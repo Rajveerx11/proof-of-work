@@ -181,7 +181,9 @@ code isolation. The base uses the launcher's installed Python dependencies and
 copied installed JS dependencies only when recognized dependency inputs match the
 frozen tree byte-for-byte, including uncommitted changes and nested manifests.
 Python manifests/locks/requirements (including recursive local pip requirement and
-constraint includes) and JS manifests/locks/manager configuration are compared.
+constraint includes and all PEP735 dependency groups) and JS manifests/locks/manager
+configuration are compared. Group includes are validated recursively; local helper
+references in any group and missing/cyclic/ambiguous includes fail closed.
 Remote, linked, escaping or cyclic pip includes and dynamic/custom/local Python
 dependency sources require independent base provisioning. Changed inputs fail closed: install and measure the reviewed base
 independently and review a committed baseline before comparing that candidate.
