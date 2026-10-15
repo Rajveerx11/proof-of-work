@@ -32,12 +32,18 @@ figure out the smallest check that catches it.
 ```bash
 git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
-uv sync --extra dev      # create .venv and install the project + pytest
-uv run pytest -q         # run the suite (CI runs it on Linux + Windows x Python 3.11–3.13)
-uvx ruff check .         # lint
+uv sync --locked --extra dev  # install the reviewed lockfile into .venv
+uv run --frozen pytest -q     # CI: Linux + Windows x Python 3.11–3.14
+uv run --frozen ruff check .  # use the project-pinned lint tool
 ```
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11+, [uv](https://docs.astral.sh/uv/), and Node.js 24 for the
+JavaScript/TypeScript corpus and configured-suite integration tests. CI installs
+Node explicitly on both operating systems.
+
+CI also builds the wheel and source distribution and tests the installed wheel in
+a fresh environment outside the checkout. Tags run this same validation before
+the existing PyPI publishing and artifact-attestation steps.
 
 ## The golden rule: no false positives without a test
 
@@ -89,7 +95,7 @@ reproducible from facts alone. PRs that let the judge influence `passed` will be
 ## Pull requests
 
 - Keep diffs small and focused — one concern per PR.
-- **CI must pass**: tests on Linux/Windows x Python 3.11–3.13, plus `ruff`.
+- **CI must pass**: tests on Linux/Windows x Python 3.11–3.14, plus pinned `ruff` and distribution validation.
 - **The tool gates its own PRs.** `proof-of-work check` runs on your diff via
   [`.github/workflows/self-check.yml`](.github/workflows/self-check.yml) — if you touch
   tests, expect it to notice.
