@@ -6,13 +6,25 @@ name: Self-check (dogfood)
 on:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: self-check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0   # need the base commit in history to diff against it
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
@@ -20,7 +32,7 @@ jobs:
       # not just scan the diff. (uv sync, not --system: the runner's system
       # Python is PEP-668 externally-managed.)
       - name: Install (with reviewed locked coverage tooling)
-        run: uv sync --frozen --extra dev
+        run: uv sync --locked --extra dev
       # Fixed reviewed fixture floor, not a baseline proposed by the candidate.
       - name: Real required coverage comparison (positive and negative regression)
         run: uv run --frozen python -m pytest -q tests/test_coverage_policy.py -k actual_baseline_comparison
@@ -30,17 +42,3 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: uv run --frozen proof-of-work check --base "$PR_BASE_SHA" --measure-base-coverage
-
-  real-js-coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - uses: astral-sh/setup-uv@v7
-        with:
-          python-version: '3.12'
-      - run: uv sync --frozen --extra dev
-      - name: Real Jest and Vitest coverage and execution evidence
-        run: uv run --frozen python -m pytest -q integration/test_js_coverage.py
