@@ -10,19 +10,25 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
-from .types import Finding, MutationResult, Severity, TestResult, Verdict
+from .types import Diff, Finding, MutationResult, Severity, TestResult, Verdict
 
 DEFAULT_DB = ".proofofwork/log.db"
 
 
 def _changeset_sha(diff) -> str:
     h = hashlib.sha256()
+    h.update(diff.base_commit.encode("utf-8", "surrogateescape"))
+    h.update(b"\0")
     for f in diff.files:
+        h.update(f.old_path.encode("utf-8", "surrogateescape"))
+        h.update(b"\0")
         h.update(f.status.encode())
         h.update(b"\0")
-        h.update(f.path.encode())
+        h.update(f.path.encode("utf-8", "surrogateescape"))
         h.update(b"\0")
         for line in f.added:
             h.update(b"+" + line.encode("utf-8", "replace") + b"\n")
@@ -31,23 +37,75 @@ def _changeset_sha(diff) -> str:
     return h.hexdigest()
 
 
+def _capture_coverage_baseline(root: str, diff: Diff, base_ref: str,
+                               staged: bool) -> tuple[bool, float | None, dict | None]:
+    """Snapshot policy inputs before any candidate-controlled code can execute.
+
+    Ordinary HEAD is the documented trusted-local mode. Explicit bases and staged
+    HEAD use the collector's immutable commit. Staged metadata is a fallback only
+    when that commit has no baseline; never re-resolve HEAD after this decision.
+    Empty commits retain local reads for synthetic Diff/non-Git test callers.
+    """
+    from .core.detector.coverage_delta import (
+        baseline_exists,
+        baseline_path,
+        read_baseline_metadata,
+        valid_coverage,
+    )
+
+    baseline_base = diff.base_commit if staged or base_ref != "HEAD" else None
+    existing = False
+    metadata = None
+    if baseline_base:
+        existing = baseline_exists(root, base_ref=baseline_base)
+        metadata = read_baseline_metadata(root, base_ref=baseline_base) if existing else None
+    if not baseline_base or (staged and not existing):
+        existing = os.path.lexists(baseline_path(root, staged=staged))
+        metadata = read_baseline_metadata(root, staged=staged, local_only=True) if existing else None
+    if not baseline_base and not staged and not existing and diff.base_commit:
+        # A deleted committed floor is not permission to opt out in local HEAD mode.
+        # Keep the local value missing: required mode must restore/review the floor.
+        existing = baseline_exists(root, base_ref=diff.base_commit)
+    value = metadata.get("coverage") if metadata is not None else None
+    return existing, float(value) if valid_coverage(value) else None, metadata
+
+
 def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           run_tests: bool = True, run_mutation: bool = False, use_judge: bool = False,
           update_baseline: bool = False, db_path: str | None = None,
           coverage_drop_threshold: float = 2.0,
-          coverage_policy: str = "required", measure_base_coverage: bool = False,
-          extra_findings: list[Finding] | None = None) -> Verdict:
+          extra_findings: list[Finding] | None = None,
+          suite_base: str | None = None, coverage_policy: str = "required",
+          integrity_policy: str = "strict", sandbox_kind: str = "local",
+          sandbox_image: str | None = None, measure_base_coverage: bool = False) -> Verdict:
     """Run the full gate against a changeset and return a fact-based Verdict."""
     from .core.detector import ALL_CHECKS
     from .core.gitdiff import _git, collect_diff
 
     root = os.path.abspath(root)
+    if integrity_policy not in ("strict", "advisory"):
+        detail = "integrity policy must be 'strict' or 'advisory'"
+        return Verdict(passed=False, reasons=[f"BLOCK integrity-policy-invalid: {detail}"],
+                       findings=[Finding("integrity-policy-invalid", Severity.BLOCK, detail)],
+                       coverage_policy=coverage_policy, integrity_policy=integrity_policy)
+    if sandbox_kind != "local" or sandbox_image is not None:
+        detail = ("Docker backend is experimental and not integrated with gate runners; "
+                  "isolated execution is unavailable; refusing local fallback")
+        return Verdict(passed=False, reasons=[f"BLOCK isolation-unavailable: {detail}"],
+                       findings=[Finding("isolation-unavailable", Severity.BLOCK, detail)],
+                       coverage_policy=coverage_policy, integrity_policy=integrity_policy,
+                       execution_mode="unavailable")
+    execution_mode = "trusted-local" if run_tests else "detector-only"
+    coverage_status = "not-verified" if run_tests else "not-run"
+    if coverage_policy not in ("required", "test-only"):
+        detail = "coverage policy must be 'required' or 'test-only'"
+        return Verdict(passed=False, reasons=[f"BLOCK coverage-policy-invalid: {detail}"],
+                       findings=[Finding("coverage-policy-invalid", Severity.BLOCK, detail)],
+                       coverage_policy=coverage_policy, integrity_policy=integrity_policy,
+                       execution_mode=execution_mode, coverage_status=coverage_status)
 
     try:
-        trusted_ref = (_git(root, "rev-parse", "--verify", "--end-of-options",
-                            f"{'HEAD' if staged else base_ref}^{{commit}}").strip()
-                       if run_tests else None)
-        diff = collect_diff(root, trusted_ref or base_ref, staged=staged)
+        diff = collect_diff(root, base_ref, staged=staged)
         if db_path is None:
             # Staged checks may not add log files to the working tree. An explicit
             # --db path is caller-requested output and is used unchanged.
@@ -57,9 +115,112 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     except Exception as exc:  # noqa: BLE001 - git failures must not become empty passing diffs
         detail = f"cannot collect git diff: {exc}"
         return Verdict(passed=False, reasons=[f"BLOCK git-diff: {detail}"],
-                       findings=[Finding("git-diff", Severity.BLOCK, detail)])
+                       findings=[Finding("git-diff", Severity.BLOCK, detail)],
+                       coverage_policy=coverage_policy, integrity_policy=integrity_policy,
+                       execution_mode=execution_mode, coverage_status=coverage_status)
 
     findings: list[Finding] = list(extra_findings or ())
+    tests = TestResult()
+    existing_baseline = False
+    coverage_baseline = None
+    baseline_metadata = None
+    execution_allowed = True
+    bootstrap_coverage = None
+    baseline_source = ""
+    measured_base = None
+    baseline_measurements = {}
+    try:
+        existing_baseline, coverage_baseline, baseline_metadata = _capture_coverage_baseline(
+            root, diff, base_ref, staged)
+    except Exception as exc:  # noqa: BLE001 - policy capture failures cannot permit an opt-out
+        execution_allowed = False
+        findings.append(Finding("coverage-baseline-error", Severity.BLOCK, str(exc)))
+    if coverage_policy == "test-only":
+        findings.append(Finding("coverage-opt-out", Severity.INFO,
+                                "explicit test-only policy: coverage NOT verified"))
+        if existing_baseline:
+            execution_allowed = False
+            findings.append(Finding("coverage-policy-bypass", Severity.BLOCK,
+                                    "test-only cannot bypass an existing trusted coverage baseline"))
+        if update_baseline:
+            execution_allowed = False
+            findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK,
+                                    "test-only cannot bootstrap a coverage baseline"))
+    if update_baseline and base_ref != "HEAD":
+        execution_allowed = False
+        findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK,
+                                "bootstrap is local-only; explicit-base comparisons require a reviewed committed floor"))
+    if update_baseline and not run_tests:
+        findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK,
+                                "--update-baseline requires a successful test run"))
+
+    if measure_base_coverage and (staged or update_baseline or not run_tests
+                                  or coverage_policy != "required"):
+        execution_allowed = False
+        findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
+                                "base measurement requires required coverage and tests; "
+                                "it cannot combine with staged/bootstrap/test-only modes"))
+
+    # Freeze configured policy and its secondary baseline restrictions before detectors.
+    configured = suite_base is not None
+    suites = None
+    commit = ""
+    try:
+        from .core.suites import configured_mode
+        configured = configured or configured_mode(
+            root, staged=staged,
+            changed_paths=[path for f in diff.files for path in (f.path, f.old_path) if path])
+    except Exception as exc:  # noqa: BLE001 - config discovery failures cannot select fallback
+        configured = True
+        findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
+    if configured:
+        tests = TestResult(framework="configured", evidence="exit-code")
+        try:
+            from .core.suites import check_coverage_policy, load_suites
+            if not suite_base:
+                raise ValueError("configured suites require explicit --suite-base REF")
+            commit, reviewed_suites = load_suites(root, suite_base)
+            tests.suite_base = commit
+            tests.required_suites = [suite["id"] for suite in reviewed_suites]
+            if existing_baseline:
+                raise ValueError("trusted coverage baseline exists; configured coverage is unsupported")
+            check_coverage_policy(root, commit, base_ref=diff.base_commit or base_ref,
+                                  staged=staged, update_baseline=update_baseline)
+            if coverage_policy != "test-only":
+                raise ValueError("configured exit-code suites require explicit coverage_policy='test-only'; "
+                                 "required coverage is unsupported")
+            if not run_tests:
+                raise ValueError("all configured suites are required; --no-tests is unsupported")
+            suites = reviewed_suites
+        except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - fail closed
+            findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
+
+    if measure_base_coverage and configured:
+        execution_allowed = False
+        findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
+                                "base measurement does not support configured exit-code suites"))
+    if existing_baseline:
+        baseline_source = (diff.base_commit if staged or base_ref != "HEAD" else "trusted-local")
+    elif measure_base_coverage and execution_allowed:
+        try:
+            from .core.detector.coverage_delta import coverage_identity, valid_coverage
+            # Measure before candidate detectors/tests can alter dependencies or policy inputs.
+            measured_base = _measure_base(root, diff.base_commit, diff.languages())
+            values = [measured_base.coverage]
+            if "+" in measured_base.framework:
+                values.append(measured_base.js_coverage)
+            if (not measured_base.ran or measured_base.passed is not True
+                    or not coverage_identity(measured_base)
+                    or not all(valid_coverage(value) for value in values)):
+                raise ValueError("frozen base requires passing suites with complete valid coverage: "
+                                 + measured_base.raw)
+            coverage_baseline = min(values)
+            baseline_measurements = _coverage_measurements(measured_base)
+            baseline_source = "measured:" + diff.base_commit
+        except Exception as exc:  # noqa: BLE001 - an unmeasurable base never permits fallback
+            execution_allowed = False
+            findings.append(Finding("coverage-base-unavailable", Severity.BLOCK, str(exc)))
+
     for check_fn in ALL_CHECKS:
         try:
             findings.extend(check_fn(diff, root))
@@ -76,40 +237,21 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         findings.append(Finding(rule="check-error:learned", severity=Severity.BLOCK,
                                 message=str(e)))
 
-    tests = TestResult()
-    coverage_status = "not-run"
-    baseline_source = ""
-    if coverage_policy not in {"required", "test-only"}:
-        findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
-                                "coverage policy must be required or test-only"))
-    if coverage_policy == "test-only":
-        findings.append(Finding("coverage-opt-out", Severity.INFO,
-                                "explicit trusted test-only opt-out: coverage NOT verified"))
-        if update_baseline or measure_base_coverage:
-            findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
-                                    "test-only cannot bootstrap or measure a baseline"))
-    if not valid_threshold(coverage_drop_threshold):
-        findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
-                                "coverage threshold must be finite and between 0 and 2 points"))
-    coverage_baseline: float | None = None
-    if measure_base_coverage and (staged or update_baseline):
-        findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
-                                "base measurement cannot combine with staged/bootstrap"))
-    if measure_base_coverage and not run_tests:
-        findings.append(Finding("coverage-policy-invalid", Severity.BLOCK,
-                                "base measurement requires test execution"))
-    if update_baseline and not run_tests:
-        findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK,
-                                "--update-baseline requires a successful test run"))
-    if run_tests:
+    if configured and suites is not None and execution_allowed:
+        try:
+            tests = _run_configured_tests(root, suites, commit, staged=staged)
+            findings.append(Finding(
+                "configured-evidence-scope", Severity.INFO,
+                "reviewed commands provide exit-code test-execution evidence only; "
+                "coverage and whole-candidate/launcher attestation are unsupported"))
+        except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - fail closed
+            findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
+    if run_tests and not configured and execution_allowed:
         from .core.detector.coverage_delta import (
             METRIC,
-            baseline_exists,
             baseline_path,
             coverage_findings,
             coverage_identity,
-            read_baseline,
-            read_baseline_metadata,
             valid_coverage,
             write_baseline,
         )
@@ -117,95 +259,74 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         from .core.sandbox import get_sandbox
 
         try:
+            coverage_args = {} if coverage_policy == "required" else {"collect_coverage": False}
             if staged:
-                with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as directory:
-                    snapshot = os.path.join(directory, "tree")
-                    _git(root, "worktree", "add", "--detach", "--no-checkout", snapshot, "HEAD")
-                    try:
-                        _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
-                        _prepare_staged_dependencies(root, snapshot, diff.languages())
-                        python_env = (_staged_python_env(root, snapshot, directory)
-                                      if "python" in diff.languages() else None)
-                        tests = _run(get_sandbox("local"), snapshot, diff.languages(),
-                                     **({"python_env": python_env} if python_env else {}),
-                                     **({"collect_coverage": False}
-                                        if coverage_policy == "test-only" else {}))
-                    finally:
-                        try:
-                            _git(root, "worktree", "remove", "--force", snapshot)
-                        except RuntimeError as remove_error:
-                            shutil.rmtree(snapshot, ignore_errors=True)
-                            # Removing the directory alone leaves a stale Git registration.
-                            # Retry only this worktree; a global prune could remove unrelated ones.
-                            try:
-                                _git(root, "worktree", "remove", "--force", snapshot)
-                            except RuntimeError:
-                                raise remove_error
+                with _index_snapshot(root) as (snapshot, directory):
+                    _prepare_staged_dependencies(root, snapshot, diff.languages())
+                    python_env = (_staged_python_env(root, snapshot, directory)
+                                  if "python" in diff.languages() else None)
+                    tests = _run(get_sandbox("local"), snapshot, diff.languages(),
+                                 **({"python_env": python_env} if python_env else {}), **coverage_args)
             else:
-                tests = _run(get_sandbox("local"), root, diff.languages(),
-                             **({"collect_coverage": False}
-                                if coverage_policy == "test-only" else {}))
-            if coverage_policy == "test-only":
-                coverage_status = "test-only"
-            else:
-                # Even HEAD is resolved to a commit: worktree baseline edits cannot authorize a pass.
-                baseline_source = trusted_ref
-                coverage_baseline = read_baseline(root, base_ref=trusted_ref)
-                metadata = read_baseline_metadata(root, base_ref=trusted_ref)
-                existing_baseline = baseline_exists(root, base_ref=trusted_ref)
-                identity = coverage_identity(tests)
-                if not identity:
+                tests = _run(get_sandbox("local"), root, diff.languages(), **coverage_args)
+            if coverage_policy == "required":
+                values = [tests.coverage]
+                if "+" in tests.framework:
+                    values.append(tests.js_coverage)
+                complete = (tests.ran and tests.passed is True and coverage_identity(tests)
+                            and all(valid_coverage(value) for value in values))
+                if (measured_base is not None
+                        and coverage_identity(measured_base) != coverage_identity(tests)):
                     findings.append(Finding("coverage-incomparable", Severity.BLOCK,
-                                            "executed coverage has no supported metric identity"))
-                if existing_baseline:
-                    if coverage_baseline is None:
-                        findings.append(Finding("coverage-baseline-invalid", Severity.BLOCK,
-                                                "trusted coverage baseline is malformed or invalid"))
-                    if (not isinstance(metadata, dict) or metadata.get("metric") != METRIC
-                            or metadata.get("languages") != identity):
-                        findings.append(Finding("coverage-incomparable", Severity.BLOCK,
-                                                "trusted baseline metric/languages differ or are legacy; "
-                                                "review and migrate the baseline explicitly"))
-                elif measure_base_coverage:
-                    if staged or update_baseline:
-                        raise ValueError("base coverage measurement cannot combine with staged/bootstrap")
-                    base_tests = _measure_base(root, trusted_ref, diff.languages())
-                    if (not base_tests.ran or base_tests.passed is not True
-                            or coverage_identity(base_tests) != identity):
-                        raise ValueError("trusted base measurement requires passing comparable suites: "
-                                         + base_tests.raw)
-                    base_values = [base_tests.coverage]
-                    if "+" in base_tests.framework:
-                        base_values.append(base_tests.js_coverage)
-                    if not all(valid_coverage(v) for v in base_values):
-                        raise ValueError("trusted base measurement requires complete valid coverage")
-                    # A single conservative floor, not an average or per-suite baseline.
-                    coverage_baseline = min(base_values)
-                    baseline_source = "measured:" + trusted_ref
-                # Local bootstrap storage is never used to bypass a missing committed baseline.
-                local_exists = baseline_exists(root, staged=staged)
-                findings.extend(coverage_findings(tests, coverage_baseline,
-                                                  threshold=coverage_drop_threshold,
-                                                  bootstrap=(update_baseline and not existing_baseline)
-                                                  or (existing_baseline and coverage_baseline is None)))
-                if update_baseline and (existing_baseline or local_exists):
-                    raise ValueError("coverage baseline already exists; --update-baseline is bootstrap-only")
-                if update_baseline and not (tests.ran and tests.passed is True
-                                            and valid_coverage(tests.coverage)):
-                    raise ValueError("--update-baseline requires passing tests with complete coverage")
-                coverage_status = ("unavailable" if any(
-                    f.severity == Severity.BLOCK and f.rule.startswith("coverage-") for f in findings)
-                    or not tests.ran or tests.passed is not True
-                    else "bootstrap" if update_baseline else "verified")
+                                            "frozen base and candidate measurement identities differ"))
+                if existing_baseline and coverage_baseline is None:
+                    findings.append(Finding("coverage-baseline-invalid", Severity.BLOCK,
+                                            "existing coverage baseline is malformed or invalid"))
+                elif existing_baseline and (baseline_metadata.get("metric") != METRIC
+                                             or baseline_metadata.get("languages") != coverage_identity(tests)):
+                    findings.append(Finding("coverage-incomparable", Severity.BLOCK,
+                                            "trusted baseline metric/languages differ or legacy identity is missing; "
+                                            "remeasure on a reviewed tree and explicitly migrate the baseline"))
+                else:
+                    # Only complete passing instrumentation may suppress missing-baseline
+                    # during explicit bootstrap. The temporary floor is not yet trusted.
+                    if update_baseline and not existing_baseline and complete:
+                        bootstrap_coverage = min(values)
+                    if measured_base is not None:
+                        candidate_measurements = _coverage_measurements(tests)
+                        for family, floor in baseline_measurements.items():
+                            single = replace(tests, framework="pytest" if family == "python" else "jest",
+                                             coverage=candidate_measurements.get(family), js_coverage=None)
+                            findings.extend(replace(finding, message=f"{family}: {finding.message}")
+                                            for finding in coverage_findings(
+                                                single, floor, threshold=coverage_drop_threshold,
+                                                require_coverage=True))
+                    else:
+                        findings.extend(coverage_findings(
+                            tests, bootstrap_coverage if bootstrap_coverage is not None else coverage_baseline,
+                            threshold=coverage_drop_threshold, require_coverage=True))
+                if update_baseline:
+                    if existing_baseline:
+                        raise ValueError("coverage baseline already exists; --update-baseline is bootstrap-only")
+                    if not complete:
+                        raise ValueError("--update-baseline requires passing tests with all coverage metrics")
         except Exception as exc:  # noqa: BLE001 - execution and baseline errors fail closed
-            coverage_status = "unavailable"
             findings.append(Finding("test-execution-error", Severity.BLOCK, str(exc)))
+    if coverage_policy == "test-only":
+        # Opt-out evidence must never retain apparently verified measurement numbers.
+        tests = replace(tests, coverage=None, js_coverage=None)
 
     mutation = MutationResult()
     if run_mutation:
-        if staged:
+        if not execution_allowed:
+            findings.append(Finding("mutation-execution-suppressed", Severity.BLOCK,
+                                    "mutation cannot run when execution policy suppresses candidate commands"))
+        elif staged:
             findings.append(Finding("mutation-staged-unavailable", Severity.BLOCK,
                                     "staged mutation cannot run against the index snapshot"))
+        elif not run_tests:
+            findings.append(Finding("mutation-tests-required", Severity.BLOCK,
+                                    "detector-only checks cannot execute mutation; omit --no-tests"))
         else:
             from .core.mutation import run_mutation as _mut
             mutation = _mut(root, diff.languages())
@@ -218,25 +339,36 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         from .judge import review
         judge_meta = review(diff)  # advisory ONLY — logged as metadata, never signed
 
+    from .core.detector.integrity_policy import apply_integrity_policy
+    findings = apply_integrity_policy(findings, strict=integrity_policy == "strict")
+    if integrity_policy == "advisory":
+        findings.append(Finding("integrity-advisory", Severity.INFO,
+                                "explicit advisory integrity policy; not a human override or approval"))
     passed, reasons = _decide(findings, tests, require_tests=run_tests)
-    if coverage_policy == "test-only":
-        reasons.append("explicit trusted test-only opt-out: coverage NOT verified")
+    if integrity_policy == "advisory":
+        reasons.append("advisory integrity policy: high-risk warnings not escalated; no human approval claimed")
     bootstrapped = None
     if passed and update_baseline:
         try:
-            bootstrap_value = (min(tests.coverage, tests.js_coverage)
-                               if "+" in tests.framework else tests.coverage)
-            write_baseline(root, bootstrap_value, staged=staged, identity=coverage_identity(tests))
+            identity = coverage_identity(tests)
+            write_baseline(root, bootstrap_coverage, staged=staged, identity=identity)
             path = baseline_path(root, staged=staged)
-            bootstrapped = (path, os.stat(path).st_ino, read_baseline_metadata(root, staged=staged))
-            coverage_baseline = bootstrap_value
+            payload = {"coverage": bootstrap_coverage, "metric": METRIC, "languages": identity}
+            bootstrapped = (path, os.stat(path).st_ino, payload)
+            coverage_baseline = bootstrap_coverage
         except Exception as exc:  # noqa: BLE001 - bootstrap failures must fail closed
             findings.append(Finding("baseline-bootstrap-error", Severity.BLOCK, str(exc)))
             passed, reasons = _decide(findings, tests, require_tests=run_tests)
+    if coverage_policy == "test-only" and run_tests:
+        reasons.append("test-only: coverage NOT verified; no baseline comparison claimed")
+    if passed and run_tests and coverage_policy == "required" and not configured:
+        coverage_status = "verified"
     verdict = Verdict(passed=passed, reasons=reasons, findings=findings, tests=tests,
                       mutation=mutation, coverage_baseline=coverage_baseline, judge=judge_meta,
-                      coverage_policy=coverage_policy, coverage_status=coverage_status,
-                      coverage_baseline_source=baseline_source)
+                      coverage_policy=coverage_policy, integrity_policy=integrity_policy,
+                      execution_mode=execution_mode, coverage_status=coverage_status,
+                      coverage_baseline_source=baseline_source,
+                      coverage_baseline_measurements=baseline_measurements)
 
     try:  # a passing signed verdict requires a durable log record
         from .log import build_envelope, record
@@ -246,38 +378,46 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         if bootstrapped is not None:
             # Do not keep a newly bootstrapped baseline after a failed gate log.
             # Only remove our own unchanged file, never a concurrently replaced one.
-            path, inode, baseline_data = bootstrapped
+            path, inode, payload = bootstrapped
             try:
                 with open(path, encoding="utf-8") as f:
                     unchanged = (os.fstat(f.fileno()).st_ino == inode
-                                 and json.load(f) == baseline_data)
+                                 and json.load(f) == payload)
                 if unchanged:
                     os.unlink(path)
             except (OSError, ValueError):
                 pass
         verdict.passed = False
+        verdict.coverage_status = "not-verified" if run_tests else "not-run"
         verdict.entry_hash = ""
         verdict.reasons.append(f"BLOCK log-unavailable: {e}")
 
     return verdict
 
 
-def valid_threshold(value: object) -> bool:
-    import math
-    return (isinstance(value, (int, float)) and not isinstance(value, bool)
-            and 0 <= value <= 2.0 and math.isfinite(value))
+def _coverage_measurements(tests: TestResult) -> dict[str, float | None]:
+    """Keep freshly measured language families separate during base comparison."""
+    from .core.detector.coverage_delta import coverage_identity
+
+    identity = coverage_identity(tests)
+    if identity == ["js", "python"]:
+        return {"python": tests.coverage, "js": tests.js_coverage}
+    return {identity[0]: tests.coverage} if identity else {}
 
 
 def _measure_base(root: str, ref: str, languages: set[str]) -> TestResult:
-    """Explicit missing-baseline bootstrap: run a frozen base, never candidate imports."""
+    """Measure an immutable base with compatible trusted installed dependencies."""
     from .core.gitdiff import _git
     from .core.runner import run_tests
     from .core.sandbox import get_sandbox
 
+    if not ref:
+        raise ValueError("base measurement requires an immutable Git commit")
     with tempfile.TemporaryDirectory(prefix="proofofwork-base-") as directory:
         snapshot = os.path.join(directory, "tree")
         _git(root, "worktree", "add", "--detach", snapshot, ref)
         try:
+            _check_base_dependencies(root, snapshot, languages)
             _prepare_staged_dependencies(root, snapshot, languages)
             env = (_staged_python_env(root, snapshot, directory) if "python" in languages else None)
             return run_tests(get_sandbox("local"), snapshot, languages,
@@ -291,6 +431,169 @@ def _measure_base(root: str, ref: str, languages: set[str]) -> TestResult:
                     _git(root, "worktree", "remove", "--force", snapshot)
                 except RuntimeError:
                     raise error
+
+
+def _check_base_dependencies(root: str, snapshot: str, languages: set[str]) -> None:
+    """Refuse dependency reuse across changed inputs or unsupported workspace layouts.
+
+    Installed dependencies remain trusted launcher inputs, not attested artifacts.
+    This checks actual candidate bytes (including uncommitted changes) against the
+    frozen tree. It never installs or substitutes candidate dependencies for a base
+    that declares a different dependency state.
+    """
+    names = set()
+    if "python" in languages:
+        names.update({"pyproject.toml", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock",
+                      "setup.py", "setup.cfg", "pdm.lock", ".python-version", "requirements.txt"})
+    if languages.intersection({"js", "ts"}):
+        names.update({"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
+                      "pnpm-lock.yaml", "pnpm-workspace.yaml", "bun.lock", "bun.lockb",
+                      ".npmrc", ".yarnrc", ".yarnrc.yml", ".node-version", ".nvmrc"})
+    def inputs(directory):
+        found = {}
+        for parent, dirs, files in os.walk(directory, followlinks=False):
+            dirs[:] = [d for d in dirs if d not in {".git", "node_modules", ".venv", "venv",
+                                                   "__pycache__", ".proofofwork"}]
+            for name in files:
+                if name in names or ("python" in languages and name.startswith("requirements")
+                                     and name.endswith((".txt", ".in"))):
+                    path = Path(parent) / name
+                    if path.is_symlink():
+                        raise ValueError("base measurement cannot reuse linked dependency inputs")
+                    found[path.relative_to(directory).as_posix()] = path.read_bytes()
+        if "python" in languages:
+            _include_python_dependency_inputs(Path(directory), found)
+        return found
+    candidate, base = inputs(root), inputs(snapshot)
+    if candidate != base:
+        raise ValueError("base dependency inputs differ from candidate; install and measure "
+                         "the reviewed base independently instead of reusing candidate dependencies")
+    if languages.intersection({"js", "ts"}):
+        package = json.loads(base.get("package.json", b"{}"))
+        if (package.get("workspaces") or "pnpm-workspace.yaml" in base
+                or any(name.endswith("/package.json") for name in base)):
+            raise ValueError("frozen-base dependency reuse does not support JS workspaces")
+        for section in ("dependencies", "devDependencies", "optionalDependencies"):
+            if any(str(value).startswith(("file:", "link:", "workspace:", "portal:", ".", "/"))
+                   for value in package.get(section, {}).values()):
+                raise ValueError("frozen-base dependency reuse does not support local JS dependencies")
+        if not any(name in base for name in ("package-lock.json", "npm-shrinkwrap.json",
+                                             "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb")):
+            raise ValueError("frozen-base JS measurement requires a matching dependency lockfile")
+
+
+def _include_python_dependency_inputs(root: Path, found: dict[str, bytes]) -> None:
+    """Follow pip includes; reject dependency inputs whose source cannot be bounded."""
+    import re
+    import shlex
+    import tomllib
+    from urllib.parse import urlsplit
+
+    def local_reference(value):
+        reference = re.match(r"^[\w.-]+(?:\[[^]]+\])?\s*@\s*(\S+)", value)
+        return "file:" in value or (reference is not None and urlsplit(reference[1]).scheme
+                                    not in {"https", "http", "git+https", "git+ssh"})
+
+    active = set()
+    visited = set()
+    def requirements(relative):
+        if relative in active:
+            raise ValueError("cyclic pip dependency includes are unsupported")
+        if relative in visited:
+            return
+        active.add(relative)
+        path = root / relative
+        logical = found[relative].decode("utf-8").replace("\\\n", "")
+        for line in logical.splitlines():
+            words = shlex.split(line, comments=True)
+            if not words:
+                continue
+            first = words[0]
+            include = None
+            for short, long in (("-r", "--requirement"), ("-c", "--constraint")):
+                if first in (short, long):
+                    if len(words) != 2:
+                        raise ValueError("invalid pip dependency include")
+                    include = words[1]
+                elif first.startswith(long + "="):
+                    include = first[len(long) + 1:]
+                elif first.startswith(short) and not first.startswith("--"):
+                    include = first[len(short):]
+            if include is not None:
+                if not include or ":" in include or "$" in include or "~" in include:
+                    raise ValueError("only fixed local pip dependency includes are supported")
+                target = path.parent / include
+                resolved = target.resolve()
+                if (not resolved.is_relative_to(root.resolve()) or not target.is_file()
+                        or any(part.is_symlink() for part in (target, *target.parents))):
+                    raise ValueError("pip dependency include escapes the root or uses a linked/missing file")
+                name = resolved.relative_to(root.resolve()).as_posix()
+                found[name] = target.read_bytes()
+                requirements(name)
+            elif (first.startswith(("-e", "--editable", ".", "/", "file:"))
+                  or local_reference(line) or (path.parent / first).is_dir()
+                  or first.endswith((".whl", ".tar.gz", ".zip"))):
+                raise ValueError("local Python dependency sources require independent base provisioning")
+        active.remove(relative)
+        visited.add(relative)
+
+    for name in list(found):
+        if Path(name).name.startswith("requirements") and name.endswith((".txt", ".in")):
+            requirements(name)
+        elif Path(name).name in {"setup.py", "setup.cfg", "Pipfile"}:
+            raise ValueError("legacy/dynamic Python dependency inputs require independent base provisioning")
+        elif Path(name).name == "pyproject.toml":
+            project = tomllib.loads(found[name].decode("utf-8"))
+            metadata = project.get("project", {})
+            if set(metadata.get("dynamic", ())) & {"dependencies", "optional-dependencies"}:
+                raise ValueError("dynamic Python dependencies require independent base provisioning")
+            tool = project.get("tool", {})
+            if (tool.get("uv", {}).get("sources") or tool.get("uv", {}).get("workspace")
+                    or tool.get("poetry") or tool.get("pdm")):
+                raise ValueError("custom Python dependency sources require independent base provisioning")
+            dependencies = list(metadata.get("dependencies", ()))
+            for values in metadata.get("optional-dependencies", {}).values():
+                dependencies.extend(values)
+            if any(local_reference(value) for value in dependencies):
+                raise ValueError("local Python dependency sources require independent base provisioning")
+
+
+def _run_configured_tests(root: str, suites: list[dict], commit: str, *,
+                          staged: bool) -> TestResult:
+    from .core.sandbox import get_sandbox
+    from .core.suites import run_suites
+
+    if not staged:
+        return run_suites(get_sandbox("local"), root, suites, commit, source_root=root)
+    with _index_snapshot(root) as (snapshot, directory):
+        # Validate links, but do not require/copy a root node_modules for arbitrary
+        # commands. Their explicit prerequisites must exist in the index.
+        _prepare_staged_dependencies(root, snapshot, set())
+        env = _staged_python_env(root, snapshot, directory)
+        return run_suites(get_sandbox("local"), snapshot, suites, commit,
+                          source_root=root, env=env)
+
+
+@contextmanager
+def _index_snapshot(root: str):
+    """Materialize the caller's index without changing it; clean only our worktree."""
+    from .core.gitdiff import _git
+
+    with tempfile.TemporaryDirectory(prefix="proofofwork-index-") as directory:
+        snapshot = os.path.join(directory, "tree")
+        _git(root, "worktree", "add", "--detach", "--no-checkout", snapshot, "HEAD")
+        try:
+            _git(root, "checkout-index", "--all", "--prefix=" + snapshot + os.sep)
+            yield snapshot, directory
+        finally:
+            try:
+                _git(root, "worktree", "remove", "--force", snapshot)
+            except RuntimeError as remove_error:
+                shutil.rmtree(snapshot, ignore_errors=True)
+                try:
+                    _git(root, "worktree", "remove", "--force", snapshot)
+                except RuntimeError:
+                    raise remove_error
 
 
 def _staged_python_env(root: str, snapshot: str, directory: str) -> dict[str, str]:
@@ -355,9 +658,11 @@ def _prepare_staged_dependencies(root: str, snapshot: str, languages: set[str]) 
     for parent, dirs, files in os.walk(packages, followlinks=False):
         for name in (*dirs, *files):
             path = Path(parent) / name
-            if not path.resolve().is_relative_to(package_root):
+            if (not path.resolve().is_relative_to(package_root)
+                    or (path.is_symlink() and os.path.isabs(os.readlink(path)))
+                    or (hasattr(path, "is_junction") and path.is_junction())):
                 raise ValueError(f"node_modules link escapes installed dependencies: {path}")
-    shutil.copytree(packages, Path(snapshot) / "node_modules")
+    shutil.copytree(packages, Path(snapshot) / "node_modules", symlinks=True)
 
 
 def _decide(findings: list[Finding], tests: TestResult, *,
@@ -380,6 +685,9 @@ def _decide(findings: list[Finding], tests: TestResult, *,
     passed = not blocked and not tests_failed and not tests_missing
     if passed and not require_tests:
         reasons.append("detector-only: tests were not run; no test pass claimed")
+    if passed and tests.framework == "configured":
+        reasons.append("all required configured suites passed (exit-code evidence only; "
+                       "not full candidate attestation)")
     if passed and not reasons:
         if any(f.rule == "coverage-baseline-missing" for f in findings):
             reasons.append("tests passed; coverage baseline unavailable (coverage not enforced)")

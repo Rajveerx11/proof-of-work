@@ -80,7 +80,8 @@ git diff ──▶ deterministic checks ──▶ re-run real tests ──▶ co
 | Signal | Severity | How |
 |---|---|---|
 | Deleted test file, fake-pass exit (`sys.exit(0)`, `process.exit(0)`), coverage drop vs baseline, function-under-test mocked away | **block** (fails the verdict) | deterministic detector |
-| Weakened or removed asserts, added `skip`/`only`/`xfail`, renamed test, surviving mutants | **warn** (surfaced, does not fail alone) | deterministic detector |
+| Weakened/removed asserts, removed test functions, added `skip`/`only`/`xfail`, loss of test discovery on rename | **block** under source-tree strict policy (v0.2.0: warn) | deterministic heuristics + policy |
+| Preserved test rename, surviving mutants | **warn** (does not fail alone) | deterministic detector |
 | Real tests fail on a clean re-run | **block** | test runner |
 | "Does this diff weaken verification or miss the task?" | metadata only | LLM judge (advisory, bring your own key) |
 
@@ -102,35 +103,70 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
       mutation: "false"   # optional: also run mutation testing (slower)
   ```
 
-Flags: `--staged`, `--base <ref>`, `--no-tests`, `--mutation`, `--update-baseline`,
-`--json`, `--judge`, `--db <path>`.
+Flags: `--staged`, `--base <ref>`, `--suite-base <reviewed-ref>`, `--no-tests`,
+`--mutation`, `--update-baseline`, `--json`, `--judge`, `--db <path>`.
 
-Coverage is now **required by default** for Python-only, JS/TS-only and mixed
-checks: missing instrumentation, stale/malformed/empty reports and incomparable
-baselines block a passing test exit. See [coverage policy and migration](docs/coverage-policy.md)
-for the metric, reviewed pinned tooling, trusted test-only opt-out and security limits.
+**Unreleased source-tree hardening:** checks now default to `--coverage-policy required`
+and `--integrity-policy strict`. Required coverage blocks missing/stale/invalid reports
+and missing or incompatible trusted baselines. Strict integrity blocks recognized
+skip/focus additions, removed/weakened assertions, and loss of default test discovery.
+These changes are not included in the `v0.2.0` tag shown above. See
+[coverage policy and migration](docs/coverage-policy.md) and
+[integrity policy and heuristic limits](docs/integrity-policy.md).
 
-Baseline bootstrap is explicit and one-time: on a reviewed tree without a baseline,
-run `proof-of-work check --update-baseline`, then review and force-add
-`.proofofwork/baseline.json`. Staged bootstrap writes Git metadata instead; copy it
-into that tracked path before review/commit. Neither local file nor Git metadata
-can authorize subsequent checks until reviewed into the trusted base commit.
-All checks (including default `HEAD`) trust the frozen committed baseline, never
-candidate worktree/index baseline edits. Legacy scalar-only files need an explicit
-reviewed migration to the new line metric and language identity.
+A trusted operator can explicitly select `--coverage-policy test-only` only without
+an existing trusted baseline, or `--integrity-policy advisory`; both modes are labeled
+in JSON and signed evidence. Advisory is not human approval. Protect policy selection
+in trusted CI; an agent-controlled launcher cannot authorize its own opt-out.
+`--no-tests` produces detector-only evidence and cannot be combined with mutation.
+Local execution remains trusted-only. The [experimental Docker backend](docs/isolation.md)
+is not integrated or live-validated: `check --sandbox docker` fails closed without
+local fallback, and `eval run --untrusted` is rejected before execution.
 
-For initial CI adoption with **no** base baseline, opt in to
-`--measure-base-coverage`: measure the immutable base in an owned worktree and
-compare fresh candidate coverage. It never falls back around an existing invalid
-or incomparable baseline and does not write a proposed baseline. The default drop
-allowance remains 2 points. Mixed suites use one conservative scalar floor for both
-measurements, not an average or independent per-suite history.
+The source-tree CLI/API also supports [reviewed configured suites](docs/configured-suites.md)
+for custom commands and multiple package roots. This bounded mode requires an explicit
+`--suite-base` and `--coverage-policy test-only`, runs every required suite, and reports exit-code execution evidence,
+not full candidate attestation. Coverage baselines and bootstrap are unsupported and
+fail closed; the following coverage behavior describes the legacy unconfigured runner.
 
-A trusted launcher may explicitly use `--coverage-policy test-only` for exit-only
-projects; reasons, JSON and signed evidence label coverage **NOT verified**.
-Staged tests run against the index snapshot. Installed, ignored JS dependencies
-are copied only when needed; escaping links/junctions fail closed. This is local
-execution of trusted code, not a hostile-code security sandbox.
+Coverage bootstrap is explicit and one-time: after installing test dependencies, run
+`proof-of-work check --update-baseline` for ordinary checks, or
+`proof-of-work check --staged --update-baseline` for the pre-commit hook. The latter
+writes the measured baseline to Git's local metadata (`git rev-parse --git-path
+proofofwork/baseline.json`), not the ignored working tree or index. It persists across
+commits in that local repository but is **not shared by clones or CI**. To share a
+trusted baseline, copy the local metadata baseline into the ignored worktree path,
+then force-add and review it before committing:
+
+```bash
+mkdir -p .proofofwork
+cp "$(git rev-parse --git-path proofofwork/baseline.json)" .proofofwork/baseline.json
+git add -f .proofofwork/baseline.json
+```
+
+Staged checks prioritize the committed HEAD value over local metadata (so the new
+baseline is trusted only after the reviewed commit). Ordinary `--base <ref>` checks
+(including CI) use the baseline in the verified base commit, never the candidate's
+working-tree or newly committed baseline. If the base has no baseline, a candidate's
+first proposed baseline is **not** silently trusted: measured coverage blocks with
+`coverage-baseline-missing` until a baseline is explicitly bootstrapped locally and
+reviewed into the base branch. Ordinary local checks without `--base` still use the
+local baseline. Bootstrap fails if any baseline already exists, if coverage is invalid
+or unavailable, or if another gate check fails; it never updates a baseline to accept
+a drop. A fresh clone using the hook must bootstrap its own local baseline or receive
+the reviewed committed baseline. Staged tests run in a temporary Git worktree over the
+index content, with ignored `node_modules` copied from the working tree only when
+JS/TS files changed. Mixed Python and JS/TS changes require both suites. Python
+coverage and JS/TS coverage are kept separate, not averaged: when both are measured,
+each is conservatively compared with the existing scalar baseline. A material drop in
+either blocks. This scalar baseline does not capture independent per-language history,
+so a JS/TS suite with a historically lower coverage percentage may be blocked even
+without a regression. When a trusted baseline exists but either mixed-suite coverage
+is unavailable, `coverage-incomparable` blocks rather than silently skipping a suite.
+Install JS/TS dependencies first; missing/non-ignored dependencies, links or junctions
+out of `node_modules`, and staged links or junctions escaping the snapshot fail closed.
+This is local execution of
+trusted code, not a security sandbox; ignored installed dependencies must be trusted.
 
 The judge (`--judge`) is advisory only: its output is logged as metadata and never changes
 the verdict. Set `ANTHROPIC_API_KEY` and install the extra
@@ -371,3 +407,6 @@ ships with a test proving it does not. This repo gates its own PRs with Proof-of
 
 [Apache License 2.0](LICENSE). The deterministic detector, CLI, hook, and Action are open and
 free.
+
+When a reviewed base has no coverage baseline, `proof-of-work check --base REF --measure-base-coverage` explicitly measures that immutable base with compatible
+installed dependencies; see [coverage policy](docs/coverage-policy.md#explicit-frozen-base-measurement).

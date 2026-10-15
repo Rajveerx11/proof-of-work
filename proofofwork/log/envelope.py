@@ -29,15 +29,19 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
             "tool_version": __version__,
             "ruleset_version": "v1",
             "tests_passed": verdict.tests.passed,
+            "coverage_policy": verdict.coverage_policy,
+            "coverage_baseline_source": verdict.coverage_baseline_source,
+            "coverage_baseline_measurements": {
+                family: value if valid_coverage(value) else None
+                for family, value in verdict.coverage_baseline_measurements.items()
+            },
+            "integrity_policy": verdict.integrity_policy,
+            "execution_mode": verdict.execution_mode,
+            "coverage_status": verdict.coverage_status,
             "coverage": (verdict.tests.coverage if valid_coverage(verdict.tests.coverage)
                          else None),
             "js_coverage": (verdict.tests.js_coverage if valid_coverage(verdict.tests.js_coverage)
                             else None),
-            "coverage_baseline": (verdict.coverage_baseline
-                                  if valid_coverage(verdict.coverage_baseline) else None),
-            "coverage_policy": verdict.coverage_policy,
-            "coverage_status": verdict.coverage_status,
-            "coverage_baseline_source": verdict.coverage_baseline_source,
             "timestamp": datetime.now(UTC).isoformat(),
         },
     }
