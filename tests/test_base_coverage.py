@@ -129,17 +129,11 @@ def test_mixed_fresh_baselines_compare_each_language(monkeypatch, tmp_path, cand
 
 @pytest.mark.parametrize('directive', ['-r deps/runtime.txt', '--requirement=deps/runtime.txt',
                                        '-cdeps/runtime.txt', '--constraint deps/runtime.txt'])
-def test_recursive_pip_inputs_are_compared(tmp_path, directive):
-    roots = [tmp_path / 'candidate', tmp_path / 'base']
-    for directory in roots:
-        directory.mkdir()
-        put(directory / 'requirements.txt', directive + '\n')
-        put(directory / 'deps/runtime.txt', '-c deeper.txt\nsample-package==1.0\n')
-        put(directory / 'deps/deeper.txt', 'constraint==1.0\n')
-    engine._check_base_dependencies(*(str(root) for root in roots), {'python'})
-    put(roots[0] / 'deps/deeper.txt', 'constraint==2.0\n')
-    with pytest.raises(ValueError, match='dependency inputs differ'):
-        engine._check_base_dependencies(*(str(root) for root in roots), {'python'})
+def test_pip_includes_require_independent_provisioning(tmp_path, directive):
+    put(tmp_path / 'requirements.txt', directive + '\n')
+    put(tmp_path / 'deps/runtime.txt', 'sample-package==1.0\n')
+    with pytest.raises(ValueError, match='independent base provisioning'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
 
 
 @pytest.mark.parametrize('directive', ['-r ../outside.txt', '-r https://example.invalid/deps.txt',
@@ -157,6 +151,7 @@ def test_unsafe_or_unbounded_requirement_includes_block(tmp_path, directive):
                                      '[tool.uv.sources]\nfoo={path="local"}\n',
                                      '[project]\ndependencies=["foo @ file:local.whl"]\n'])
 def test_dynamic_or_local_python_dependencies_block(tmp_path, content):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
     put(tmp_path / 'pyproject.toml', content)
     with pytest.raises(ValueError, match='independent base provisioning'):
         engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
@@ -175,6 +170,8 @@ def test_compact_local_python_references_are_rejected(tmp_path, dependency, mani
     (tmp_path / 'localdir').mkdir()
     content = (f'[project]\ndependencies=["{dependency}"]\n' if manifest == 'pyproject.toml'
                else dependency + '\n')
+    if manifest == 'pyproject.toml':
+        put(tmp_path / 'uv.lock', 'version = 1\n')
     put(tmp_path / manifest, content)
     if manifest == 'pyproject.toml' and dependency == 'localdir':
         # A bare project dependency name is a registry package, unlike a pip local directory.
@@ -191,12 +188,14 @@ def test_dependency_groups_cannot_reuse_candidate_local_helpers(tmp_path, depend
     content = f'[dependency-groups]\nhelpers=["{dependency}"]\n'
     if included:
         content += 'dev=[{include-group="helpers"}]\n'
+    put(tmp_path / 'uv.lock', 'version = 1\n')
     put(tmp_path / 'pyproject.toml', content)
     with pytest.raises(ValueError, match='independent base provisioning'):
         engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
 
 
 def test_registry_dependency_groups_and_normalized_includes_are_supported(tmp_path):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
     put(tmp_path / 'pyproject.toml', '[dependency-groups]\nTest_Helpers=["pytest>=8"]\n'
         'dev=[{include-group="test-helpers"},"coverage==7.13.5"]\n')
     engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
@@ -210,6 +209,125 @@ def test_registry_dependency_groups_and_normalized_includes_are_supported(tmp_pa
     'Test_Helpers=[]\ntest-helpers=[]',
 ])
 def test_unbounded_or_malformed_dependency_groups_fail_closed(tmp_path, groups):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
     put(tmp_path / 'pyproject.toml', '[dependency-groups]\n' + groups + '\n')
     with pytest.raises((ValueError, TypeError)):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('dependency,allowed', [('hatchling>=1', True),
+                                               ('helper @ ./local-helper', False),
+                                               ('helper@file:helper.whl', False)])
+def test_build_system_requirements_cannot_reuse_candidate_helpers(tmp_path, dependency, allowed):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
+    put(tmp_path / 'pyproject.toml', f'[build-system]\nrequires=["{dependency}"]\n'
+        'build-backend="helper"\n')
+    if allowed:
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+    else:
+        with pytest.raises(ValueError, match='independent base provisioning'):
+            engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('content', [
+    '[build-system]\nbackend-path=["backend"]\n',
+    '[tool.setuptools.dynamic.dependencies]\nfile=["deps.txt"]\n',
+    '[tool.setuptools.dynamic.optional-dependencies]\ndev={file=["dev.txt"]}\n',
+    '[tool.hatch.metadata.hooks.custom]\npath="hook.py"\n',
+    '[tool.hatch.envs.test]\ndependencies=["helper @ ./helper"]\n',
+    '[tool.poetry]\n', '[tool.pdm]\n', '[tool.rye]\n', '[tool.pixi]\n',
+])
+def test_declared_custom_python_layouts_require_independent_provisioning(tmp_path, content):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
+    put(tmp_path / 'pyproject.toml', content)
+    with pytest.raises(ValueError, match='independent base provisioning'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('setting,value', [
+    ('sources', '{}'), ('workspace', '{}'), ('dev-dependencies', '["helper @ ./helper"]'),
+    ('override-dependencies', '["helper @ ./helper"]'),
+    ('constraint-dependencies', '["helper @ ./helper"]'),
+    ('build-constraint-dependencies', '["helper @ ./helper"]'),
+    ('extra-build-dependencies', '{helper=["dependency @ ./dependency"]}'),
+    ('index', '[{url="./wheels"}]'), ('index-url', '"file:./wheels"'),
+    ('extra-index-url', '["file:./wheels"]'), ('find-links', '["./wheels"]'),
+])
+def test_custom_uv_dependency_inputs_are_explicitly_unsupported(tmp_path, setting, value):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
+    put(tmp_path / 'pyproject.toml', f'[tool.uv]\n{setting}={value}\n')
+    with pytest.raises(ValueError, match='independent base provisioning'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+def test_standalone_uv_configuration_cannot_escape_input_validation(tmp_path):
+    put(tmp_path / 'uv.toml', 'override-dependencies=["helper @ ./helper"]\n')
+    with pytest.raises(ValueError, match='independent base provisioning'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('requirement', [
+    '--find-links wheels', '--find-links=wheels', '-f wheels', '-fwheels',
+    '--index-url file:./wheels', '--extra-index-url=file:./wheels',
+    '${DEPENDENCY}', 'package==${VERSION}', 'package [extra] @ ../helper',
+    'vendor/pkg.tgz', 'pkg.tar', 'pkg.tar.bz2', 'pkg.tar.xz', '~user/pkg.whl',
+])
+def test_unbounded_pip_sources_and_local_archives_require_independent_provisioning(tmp_path, requirement):
+    put(tmp_path / 'requirements.txt', requirement + '\n')
+    with pytest.raises(ValueError, match='independent base provisioning'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+def test_static_registry_metadata_and_unrelated_tool_settings_remain_supported(tmp_path):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
+    put(tmp_path / 'pyproject.toml', '[project]\ndependencies=["requests>=2"]\n'
+        '[project.optional-dependencies]\ndev=["pytest>=8"]\n'
+        '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        '[tool.ruff]\nline-length=100\n')
+    engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('content', [
+    '[project]\ndependencies="helper"\n',
+    '[project]\ndynamic="dependencies"\n',
+    '[project.optional-dependencies]\ndev="helper"\n',
+    '[build-system]\nrequires="helper"\n',
+    '[project]\ndependencies=[" helper [extra] @ ../helper"]\n',
+    '[tool.flit.metadata]\nrequires=["helper @ ./helper"]\n',
+    '[tool.uv.pip]\nfind-links=["wheels"]\n',
+    '[[tool.uv.dependency-metadata]]\nname="helper"\nrequires-dist=["local @ ./local"]\n',
+])
+def test_unsupported_or_malformed_static_python_inputs_fail_closed(tmp_path, content):
+    put(tmp_path / 'uv.lock', 'version = 1\n')
+    put(tmp_path / 'pyproject.toml', content)
+    with pytest.raises((ValueError, TypeError)):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+def test_pyproject_without_frozen_uv_lock_requires_independent_provisioning(tmp_path):
+    put(tmp_path / 'pyproject.toml', '[project]\ndependencies=["requests>=2"]\n')
+    with pytest.raises(ValueError, match='matching root uv.lock'):
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+@pytest.mark.parametrize('source,allowed', [
+    ('{registry="https://pypi.org/simple"}', True), ('{editable="."}', True),
+    ('{editable="helper"}', False), ('{directory="helper"}', False),
+    ('{path="helper.whl"}', False), ('{registry="file:./wheels"}', False),
+])
+def test_uv_lock_sources_are_registry_or_own_root_only(tmp_path, source, allowed):
+    put(tmp_path / 'pyproject.toml', '[project]\nname="fixture"\n')
+    put(tmp_path / 'uv.lock', f'version=1\n[[package]]\nname="fixture"\nsource={source}\n')
+    if allowed:
+        engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+    else:
+        with pytest.raises(ValueError, match='independent base provisioning'):
+            engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
+
+
+def test_uv_lock_registry_source_cannot_hide_local_artifact(tmp_path):
+    put(tmp_path / 'pyproject.toml', '[project]\nname="fixture"\n')
+    put(tmp_path / 'uv.lock', 'version=1\n[[package]]\nname="helper"\n'
+        'source={registry="https://pypi.org/simple"}\nwheels=[{url="file:helper.whl"}]\n')
+    with pytest.raises(ValueError, match='independent base provisioning'):
         engine._check_base_dependencies(str(tmp_path), str(tmp_path), {'python'})
