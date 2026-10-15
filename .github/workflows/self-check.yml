@@ -19,7 +19,14 @@ jobs:
       # dev extra installs pytest so the gate can actually RE-RUN our suite,
       # not just scan the diff. (uv sync, not --system: the runner's system
       # Python is PEP-668 externally-managed.)
-      - name: Install (with dev extra)
-        run: uv sync --extra dev
+      - name: Install (with reviewed locked coverage tooling)
+        run: uv sync --frozen --extra dev
+      # Fixed reviewed fixture floor, not a baseline proposed by the candidate.
+      - name: Real required coverage comparison (positive and negative regression)
+        run: uv run --frozen python -m pytest -q tests/test_coverage_policy.py -k actual_baseline_comparison
+      # Initial adoption still requires a reviewed baseline in the trusted base;
+      # never bootstrap from candidate output to make this step pass.
       - name: Gate this PR's diff against its base
-        run: uv run proof-of-work check --base "${{ github.event.pull_request.base.sha }}"
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: uv run --frozen proof-of-work check --base "$PR_BASE_SHA"

@@ -56,8 +56,8 @@ interpreters and programs may access files, launch subprocesses or perform netwo
 ## Explicit trusted base
 
 ```bash
-proof-of-work check --root . --base origin/main --suite-base origin/main --json
-proof-of-work check --root . --staged --suite-base origin/main --json
+proof-of-work check --root . --base origin/main --suite-base origin/main --coverage-policy test-only --json
+proof-of-work check --root . --staged --suite-base origin/main --coverage-policy test-only --json
 ```
 
 Fetch the trusted ref through your CI's existing trusted setup, then supply it
@@ -69,7 +69,9 @@ checks noticing configuration without `--suite-base` block. Candidate modificati
 deletions, renames away, or additions cannot substitute commands from the chosen
 trusted commit or switch the check back to the legacy runner.
 To approve a config change, review it and explicitly select the new trusted commit.
-The API equivalent is `engine.check(..., suite_base=reviewed_ref)`.
+The API equivalent is `engine.check(..., suite_base=reviewed_ref, coverage_policy="test-only")`.
+Configured exit-code commands cannot satisfy required coverage; the trusted operator must
+explicitly select test-only evidence. Any applicable existing baseline still blocks.
 
 For CI, run the source revision under review with trusted installed dependencies and
 both explicit refs as above; the existing tagged Action, hooks, MCP and agent adapters

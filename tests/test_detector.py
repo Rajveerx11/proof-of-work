@@ -198,3 +198,49 @@ def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
         collect_diff(str(tmp_path), "HEAD")
     assert any("--name-status" in call for call in calls)
     assert "--unified=0" in calls[-1]
+
+
+@pytest.mark.parametrize("language,source", [
+    ("python", "pytestmark = pytest.mark.skip(reason='later')"),
+    ("python", "pytest . xfail ('later')"),
+    ("python", "self.skipTest('later')"),
+    ("python", "@unittest.skipIf(True, 'later')"),
+    ("js", "test . only ('x', () => {})"),
+    ("js", '// note\rtest.skip("x", () => {})'),
+    ("js", '// note\u2028test.skip("x", () => {})'),
+    ("js", '// note\u2029test.skip("x", () => {})'),
+])
+def test_framework_markers_in_patch_code_are_warned(language, source):
+    diff = Diff([_f(path="test_x.py", is_test=True, language=language,
+                    added=source.split("\n"))])
+    assert ("added-skip", Severity.WARN) in _rules(tests_integrity.check(diff, "."))
+
+
+@pytest.mark.parametrize("language,source", [
+    ("python", "# pytest.skip('later')"),
+    ("python", "text = 'pytest.skip(\"later\")'"),
+    ("python", '"""\npytest.skip("later")\n"""'),
+    ("js", "// test.skip('later', () => {})"),
+    ("js", 'const text = "test.only(\'later\', () => {})";'),
+    ("js", "/*\ntest.skip('later', () => {})\n*/"),
+    ("js", "const text = `test.skip('later', () => {})`;"),
+    ("js", "db . test.skip('later', () => {})"),
+    ("js", "db. /* note */\ntest.skip('later', () => {})"),
+    ("js", "db?. test.only('later', () => {})"),
+])
+def test_marker_comments_strings_and_unrelated_receivers_are_quiet(language, source):
+    diff = Diff([_f(path="test_x.py", is_test=True, language=language,
+                    added=source.split("\n"))])
+    assert ("added-skip", Severity.WARN) not in _rules(tests_integrity.check(diff, "."))
+
+
+@pytest.mark.parametrize("language,source", [
+    ("python", "# def test_example():"),
+    ("python", '"""\ndef test_example():\n    pass\n"""'),
+    ("js", "/*\ntest('example', () => {})\n*/"),
+    ("js", 'const doc = "test(\'example\', () => {})";'),
+])
+def test_removing_complete_noncode_examples_does_not_remove_tests(language, source):
+    diff = Diff([_f(path="test_x.py", is_test=True, language=language,
+                    removed=source.split("\n"))])
+    assert ("removed-test-fn", Severity.WARN) not in _rules(tests_integrity.check(diff, "."))

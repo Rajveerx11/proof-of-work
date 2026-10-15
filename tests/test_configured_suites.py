@@ -78,14 +78,16 @@ def nested_node_repo(node_repo):
 
 
 def check(root, **kwargs):
-    return engine.check(str(root), suite_base=kwargs.pop("suite_base", "HEAD"), **kwargs)
+    return engine.check(str(root), suite_base=kwargs.pop("suite_base", "HEAD"),
+                        coverage_policy=kwargs.pop("coverage_policy", "test-only"), **kwargs)
 
 
 def test_all_suites_run_for_config_only_changes_and_cli(node_repo, capsys):
     base = git(node_repo, "rev-parse", "HEAD")
     # A candidate config cannot change argv, suite IDs, or evidence policy.
     write_config(node_repo, [suite("substitute", argv=["node", "-e", "process.exit(9)"])])
-    code = main(["check", "--root", str(node_repo), "--suite-base", base, "--json"])
+    code = main(["check", "--root", str(node_repo), "--suite-base", base,
+                 "--coverage-policy", "test-only", "--json"])
     verdict = json.loads(capsys.readouterr().out)
     assert code == 0 and verdict["passed"], f"{verdict['reasons']}\n{verdict['tests']['raw']}"
     result = verdict["tests"]
@@ -108,7 +110,8 @@ def test_nested_package_cwds_and_relative_prerequisites(
         entry = next(item for item in entries if item["id"] == missing_package)
         (root / entry["cwd"] / "input.txt").unlink()
     if entrypoint == "cli":
-        code = main(["check", "--root", str(root), "--suite-base", base, "--json"])
+        code = main(["check", "--root", str(root), "--suite-base", base,
+                     "--coverage-policy", "test-only", "--json"])
         verdict = json.loads(capsys.readouterr().out)
         assert code == (1 if missing_package else 0)
         passed, result = verdict["passed"], verdict["tests"]
@@ -152,7 +155,7 @@ def test_staged_nested_packages_use_index_and_preserve_source(
     trees_before = git(root, "worktree", "list", "--porcelain")
     if entrypoint == "cli":
         assert main(["check", "--root", str(root), "--suite-base", base,
-                     "--staged", "--json"]) == 0
+                     "--staged", "--coverage-policy", "test-only", "--json"]) == 0
         verdict = json.loads(capsys.readouterr().out)
         assert verdict["passed"]
         result = verdict["tests"]
@@ -176,7 +179,8 @@ def test_staged_nested_packages_use_index_and_preserve_source(
 def test_failure_does_not_skip_other_required_suites(node_repo, capsys):
     write_config(node_repo, [suite(argv=["node", "-e", "process.exit(7)"]), suite("second")])
     base = commit(node_repo)
-    code = main(["check", "--root", str(node_repo), "--suite-base", base, "--json"])
+    code = main(["check", "--root", str(node_repo), "--suite-base", base,
+                 "--coverage-policy", "test-only", "--json"])
     verdict = json.loads(capsys.readouterr().out)
     assert code == 1 and not verdict["passed"]
     assert verdict["tests"]["executed_suites"] == ["first", "second"]
@@ -467,7 +471,7 @@ def test_removed_config_never_falls_back_to_legacy(node_repo, capsys, operation,
     assert not cli_verdict["tests"]["ran"]
     # A reviewed pre-removal base still supplies every required suite. No-tests
     # remains forbidden even when that explicit base is provided.
-    assert main([*args, "--suite-base", base]) == (0 if run_tests else 1)
+    assert main([*args, "--suite-base", base, "--coverage-policy", "test-only"]) == (0 if run_tests else 1)
     trusted = json.loads(capsys.readouterr().out)["tests"]
     assert trusted["required_suites"] == ["first", "second"]
     assert trusted["executed_suites"] == (["first", "second"] if run_tests else [])
