@@ -1,7 +1,7 @@
-"""Isolation seam (N-7). v1 default = local subprocess; Docker/microVM slot in behind this.
+"""Explicit execution backends; local subprocesses are trusted, not isolation.
 
-ponytail: v1 ships only LocalSandbox (subprocess). Docker/microVM are v2 drivers that
-implement the same `Sandbox` protocol — the fork stays hidden behind `get_sandbox`.
+Docker is an experimental, opt-in Linux backend for reviewed, metadata-free snapshots.
+Backend errors never fall back to local execution.
 """
 from __future__ import annotations
 
@@ -24,8 +24,17 @@ class Sandbox(Protocol):
             timeout: int = 600) -> RunOutput: ...
 
 
-def get_sandbox(kind: str = "local") -> Sandbox:
+class SandboxError(RuntimeError):
+    """Backend unavailable, unsafe input, or disposal not confirmed."""
+
+
+def get_sandbox(kind: str = "local", *, image: str | None = None) -> Sandbox:
     if kind == "local":
+        if image is not None:
+            raise ValueError("image is only supported by the explicitly selected Docker backend")
         from .local import LocalSandbox
         return LocalSandbox()
-    raise ValueError(f"unknown sandbox {kind!r} (v1 supports 'local' only)")
+    if kind == "docker":
+        from .docker import DockerSandbox
+        return DockerSandbox(image)
+    raise ValueError(f"unknown sandbox {kind!r}; choose 'local' or 'docker'")

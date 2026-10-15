@@ -5,10 +5,14 @@ inputs:
     description: "Also run mutation testing (slower)."
     required: false
     default: "false"
-  strict-integrity:
-    description: "Block high-risk test skip/removal findings; no human override."
+  coverage-policy:
+    description: "required (default), or explicit test-only evidence with no trusted baseline."
     required: false
-    default: "false"
+    default: "required"
+  integrity-policy:
+    description: "strict (default), or advisory; advisory is not a human approval."
+    required: false
+    default: "strict"
 runs:
   using: "composite"
   steps:
@@ -25,7 +29,9 @@ runs:
       env:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PUSH_BASE_SHA: ${{ github.event.before }}
-        STRICT_INTEGRITY: ${{ inputs.strict-integrity }}
+        MUTATION: ${{ inputs.mutation }}
+        COVERAGE_POLICY: ${{ inputs.coverage-policy }}
+        INTEGRITY_POLICY: ${{ inputs.integrity-policy }}
       run: |
         case "$GITHUB_EVENT_NAME" in
           pull_request) base="$PR_BASE_SHA" ;;
@@ -46,11 +52,9 @@ runs:
           echo "Base commit $base is unavailable" >&2
           exit 1
         fi
-        flags=""
-        if [ "${{ inputs.mutation }}" = "true" ]; then flags="--mutation"; fi
-        case "$STRICT_INTEGRITY" in
-          true) flags="$flags --strict-integrity" ;;
-          false) ;;
-          *) echo "Invalid strict-integrity input (expected true/false)" >&2; exit 1 ;;
-        esac
-        proof-of-work check --base "$base" $flags
+        case "$COVERAGE_POLICY" in required|test-only) ;; *) echo "Invalid coverage policy" >&2; exit 1 ;; esac
+        case "$INTEGRITY_POLICY" in strict|advisory) ;; *) echo "Invalid integrity policy" >&2; exit 1 ;; esac
+        flags=()
+        case "$MUTATION" in true) flags+=(--mutation) ;; false) ;; *) echo "Invalid mutation input" >&2; exit 1 ;; esac
+        proof-of-work check --base "$base" --coverage-policy "$COVERAGE_POLICY" \
+          --integrity-policy "$INTEGRITY_POLICY" "${flags[@]}"

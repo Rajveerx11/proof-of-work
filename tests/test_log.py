@@ -80,7 +80,7 @@ def test_legacy_policyless_envelope_and_new_policy_both_verify(tmp_path):
     del legacy["predicate"]["integrity_policy"]
     record(legacy, db)
     strict = _verdict(True)
-    strict.integrity_policy = "strict-v1"
+    strict.integrity_policy = "strict"
     record(build_envelope("b" * 64, strict), db)
     assert verify_chain(db)
 
@@ -88,11 +88,11 @@ def test_legacy_policyless_envelope_and_new_policy_both_verify(tmp_path):
 def test_tampering_signed_integrity_policy_breaks_verification(tmp_path):
     db = str(tmp_path / "log.db")
     strict = _verdict(True)
-    strict.integrity_policy = "strict-v1"
+    strict.integrity_policy = "strict"
     envelope = build_envelope("a" * 64, strict)
     record(envelope, db)
     assert verify_chain(db)
-    envelope["predicate"]["integrity_policy"] = "advisory-v1"
+    envelope["predicate"]["integrity_policy"] = "advisory"
     with sqlite3.connect(db) as connection:
         connection.execute("UPDATE entries SET envelope_json=?", (canonical(envelope).decode(),))
     assert not verify_chain(db)

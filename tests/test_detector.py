@@ -189,7 +189,7 @@ def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
 
     def fail_patch(root, *args):
         calls.append(args)
-        if gitdiff._FULL_CONTEXT in args:
+        if any(arg.startswith("--unified=") for arg in args):
             raise RuntimeError("patch unavailable")
         return original(root, *args)
 
@@ -197,45 +197,50 @@ def test_collect_diff_fails_if_second_git_call_fails(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="patch unavailable"):
         collect_diff(str(tmp_path), "HEAD")
     assert any("--name-status" in call for call in calls)
-    assert gitdiff._FULL_CONTEXT in calls[-1]
+    assert any(arg.startswith("--unified=") for arg in calls[-1])
 
 
-@pytest.mark.parametrize("language,lines", [
-    ("python", ["pytestmark = pytest.mark.skip(reason='later')"]),
-    ("python", ["pytestmark = [pytest.mark.skipif(True, reason='later')]"]),
-    ("python", ["pytestmark = pytest.mark.xfail"]),
-    ("python", ["    pytest.xfail('later')"]),
-    ("python", ["    self.skipTest('later')"]),
-    ("python", ["@unittest.skipUnless(False, 'later')"]),
-    ("python", ["@unittest.skip"]),
-    ("python", ["pytestmark = pytest.mark.skip(", "    reason='later'", ")"]),
-    ("python", ["    pytest . xfail ('later')"]),
-    ("python", ["        value = 1", "    value = 2", "    self.skipTest('later')"]),
-    ("js", ["test.only('one', () => {})"]),
-    ("ts", ["test . only ('one', () => {})"]),
-    ("ts", ["context.skip('one', () => {})"]),
+@pytest.mark.parametrize("language,source", [
+    ("python", "pytestmark = pytest.mark.skip(reason='later')"),
+    ("python", "pytest . xfail ('later')"),
+    ("python", "self.skipTest('later')"),
+    ("python", "@unittest.skipIf(True, 'later')"),
+    ("js", "test . only ('x', () => {})"),
+    ("js", '// note\rtest.skip("x", () => {})'),
+    ("js", '// note\u2028test.skip("x", () => {})'),
+    ("js", '// note\u2029test.skip("x", () => {})'),
 ])
-def test_supported_skip_and_focus_forms(language, lines):
-    diff = Diff([_f(path="tests/test_a.py", is_test=True, language=language, added=lines)])
-    findings = tests_integrity.check(diff, ".")
-    assert [f.rule for f in findings] == ["added-skip"]
-    assert tests_integrity.apply_policy(findings, strict=True)[0].severity == Severity.BLOCK
+def test_framework_markers_in_patch_code_are_warned(language, source):
+    diff = Diff([_f(path="test_x.py", is_test=True, language=language,
+                    added=source.split("\n"))])
+    assert ("added-skip", Severity.WARN) in _rules(tests_integrity.check(diff, "."))
 
 
-@pytest.mark.parametrize("language,lines", [
-    ("python", ["db.skip(5)", "db.xfail('later')", "other.skipTest('later')"]),
-    ("python", ["# pytest.xfail('later')", "# self.skipTest('later')"]),
-    ("python", ['text = "pytestmark = pytest.mark.skip(reason=1)"']),
-    ("python", ['text = """', "pytest.xfail('later')", '"""']),
-    ("python", ["db.pytest.xfail('later')", "db.self.skipTest('later')"]),
-    ("python", ["test.only('this is not a Python test framework')"]),
-    ("js", ["db.skip(5); other.only('one'); other.skipTest('later');"]),
-    ("ts", ["db.test.only('one'); latest.only('one'); $test.only('one');"]),
-    ("js", ["// test.only('one')", "/* it.skip('one') */"]),
-    ("ts", ['const text = "test.only(1)";', "const other = `it.skip(1)`;"]),
-    ("ts", ["pytest.xfail('not a JS framework'); self.skipTest('not JS');"]),
-    ("", ["pytest.skip('unknown language')", "test.only('unknown language')"]),
+@pytest.mark.parametrize("language,source", [
+    ("python", "# pytest.skip('later')"),
+    ("python", "text = 'pytest.skip(\"later\")'"),
+    ("python", '"""\npytest.skip("later")\n"""'),
+    ("js", "// test.skip('later', () => {})"),
+    ("js", 'const text = "test.only(\'later\', () => {})";'),
+    ("js", "/*\ntest.skip('later', () => {})\n*/"),
+    ("js", "const text = `test.skip('later', () => {})`;"),
+    ("js", "db . test.skip('later', () => {})"),
+    ("js", "db. /* note */\ntest.skip('later', () => {})"),
+    ("js", "db?. test.only('later', () => {})"),
 ])
-def test_skip_matching_ignores_unrelated_calls_comments_and_strings(language, lines):
-    diff = Diff([_f(path="tests/helper", is_test=True, language=language, added=lines)])
-    assert not tests_integrity.check(diff, ".")
+def test_marker_comments_strings_and_unrelated_receivers_are_quiet(language, source):
+    diff = Diff([_f(path="test_x.py", is_test=True, language=language,
+                    added=source.split("\n"))])
+    assert ("added-skip", Severity.WARN) not in _rules(tests_integrity.check(diff, "."))
+
+
+@pytest.mark.parametrize("language,source", [
+    ("python", "# def test_example():"),
+    ("python", '"""\ndef test_example():\n    pass\n"""'),
+    ("js", "/*\ntest('example', () => {})\n*/"),
+    ("js", 'const doc = "test(\'example\', () => {})";'),
+])
+def test_removing_complete_noncode_examples_does_not_remove_tests(language, source):
+    diff = Diff([_f(path="test_x.py", is_test=True, language=language,
+                    removed=source.split("\n"))])
+    assert ("removed-test-fn", Severity.WARN) not in _rules(tests_integrity.check(diff, "."))

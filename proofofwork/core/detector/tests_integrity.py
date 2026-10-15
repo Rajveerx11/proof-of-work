@@ -1,36 +1,24 @@
-"""Test-suite integrity: deleted/renamed test files, removed test fns, added skips."""
+"""Patch-based test integrity heuristics; findings are review signals, not accusations."""
 from __future__ import annotations
 
 import io
 import re
 import tokenize
-from dataclasses import replace
 
 from ...types import Diff, Finding, Severity
-from ..gitdiff import _test_discovery
-
-# Trusted caller policy only: never read enforcement settings from the candidate tree.
-STRICT_RULES = frozenset({"test-path-removed", "removed-test-fn", "added-skip", "removed-assert"})
-
-
-def apply_policy(findings: list[Finding], *, strict: bool) -> list[Finding]:
-    """Blocking-only policy; do not mutate findings supplied by the caller."""
-    return [replace(f, severity=Severity.BLOCK)
-            if strict and f.rule in STRICT_RULES and f.severity == Severity.WARN else f
-            for f in findings]
-
+from ..gitdiff import _is_test, _language, _test_discovery
 
 _PY_TEST_FN = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
 _JS_TEST_FN = re.compile(r"""^\s*(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)""")
-
-_PY_SKIP_CALLS = {"pytest.skip", "pytest.xfail", "self.skipTest",
-                  "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
 _PY_MARKS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail"}
-_JS_SKIP = re.compile(r"(?<![\w.$])(?:it|test|describe|context)\s*\.\s*(?:skip|only)\s*\(")
+_PY_CALLS = {"pytest.skip", "pytest.xfail", "self.skipTest", "unittest.skip",
+             "unittest.skipIf", "unittest.skipUnless"}
+_JS_SKIP = re.compile(r"(?<![\w$])(?:it|test|describe|context)\s*\.\s*(?:skip|only)\s*\(")
 _JS_REGEX = re.compile(
-    r"/(?![/*])(?:\\[^\r\n]|\[(?:\\[^\r\n]|[^\]\\\r\n])*\]|[^/\\[\r\n])+/[dgimsuvy]*"
+    r"/(?![/*])(?:\\[^\r\n\u2028\u2029]|\[(?:\\[^\r\n\u2028\u2029]|[^\]\\\r\n\u2028\u2029])*\]"
+    r"|[^/\\[\r\n\u2028\u2029])+/[dgimsuvy]*"
 )
-_JS_COMMENT = re.compile(r"//[^\n]*|/\*[\s\S]*?(?:\*/|$)")
+_JS_COMMENT = re.compile(r"//[^\r\n\u2028\u2029]*|/\*[\s\S]*?(?:\*/|$)")
 _JS_STRING = re.compile(
     r"\"(?:\\[\s\S]|[^\"\\\r\n])*\"|'(?:\\[\s\S]|[^'\\\r\n])*'|`(?:\\[\s\S]|[^`\\])*`"
 )
@@ -41,7 +29,7 @@ _JS_CONTROLS = {"if", "while", "for", "with", "switch", "catch"}
 def _js_code(source: str) -> str:
     """Mask noncode without changing offsets; distinguish block ends from values.
 
-    ponytail: lightweight lexical context, not a JS/TS parser. Templates remain
+    Lightweight lexical context, not a JS/TS parser. Templates remain
     opaque and aliases/shadowing are unresolved; deeper semantics need a parser.
     """
     code = list(source)
@@ -51,6 +39,9 @@ def _js_code(source: str) -> str:
     # into a for-of separator. Depth keys keep nested loop headers independent.
     for_expressions: set[int] = set()
     expression_start = statement_start = True
+    jump_statement = False
+    line_terminated = False
+    module_depth: int | None = None
     previous = closed_paren = ""
     pending_function = pending_control = label = async_kind = ""
     pending_classes: list[tuple[int, str]] = []
@@ -59,6 +50,10 @@ def _js_code(source: str) -> str:
     pos = 0
     while pos < len(source):
         if source[pos].isspace():
+            line_terminated |= source[pos] in "\r\n\u2028\u2029"
+            if jump_statement and source[pos] in "\r\n\u2028\u2029":
+                expression_start = statement_start = True
+                jump_statement = False
             pos += 1
             continue
         comment = _JS_COMMENT.match(source, pos)
@@ -66,10 +61,19 @@ def _js_code(source: str) -> str:
         if not comment and not literal and expression_start:
             literal = _JS_REGEX.match(source, pos)
         if masked := comment or literal:
-            code[pos:masked.end()] = ["\n" if c == "\n" else " " for c in masked.group()]
+            code[pos:masked.end()] = [c if c in "\r\n\u2028\u2029" else " " for c in masked.group()]
             pos = masked.end()
+            if comment:
+                line_terminated |= any(c in comment.group() for c in "\r\n\u2028\u2029")
+            if comment and jump_statement and line_terminated:
+                expression_start = statement_start = True
+                jump_statement = False
             if literal:
-                expression_start = statement_start = False
+                line_terminated = False
+                module_source = module_depth == len(frames) and previous in {"import", "from"}
+                expression_start = statement_start = module_source
+                if module_source:
+                    module_depth = None
                 previous, closed_paren = "literal", ""
             continue
         match = _JS_TOKEN.match(source, pos)
@@ -77,6 +81,19 @@ def _js_code(source: str) -> str:
         token = match.group()
         pos = match.end()
         was_statement_start = statement_start
+        statement_boundary = statement_start or (
+            line_terminated and previous not in {".", "?."} and (
+                not frames or frames[-1] in {
+                    ("{", "block"), ("{", "switch"), ("{", "expression-block")}
+            )
+        )
+        if token in {"import", "export"} and statement_boundary:
+            module_depth = len(frames)
+        elif module_depth == len(frames) and (
+            token in {"default", "const", "let", "var", "function", "class", ";"}
+            or (token == "(" and previous == "import")
+        ):
+            module_depth = None
         if (frames and frames[-1] == ("(", "for") and token in {"=", ";", ",", "in"}
                 and previous not in {".", "?."}):
             for_expressions.add(len(frames))
@@ -104,6 +121,7 @@ def _js_code(source: str) -> str:
             frames.append(("{", kind))
             expression_start, statement_start = True, kind != "object"
         elif token == "}":
+            jump_statement = False
             kind = frames.pop()[1] if frames and frames[-1][0] == "{" else "block"
             expression_start = statement_start = kind in {"block", "switch"}
         elif token == "[":
@@ -114,6 +132,7 @@ def _js_code(source: str) -> str:
                 frames.pop()
             expression_start = statement_start = False
         elif token == ";":
+            jump_statement = False
             expression_start = True
             statement_start = not frames or frames[-1] in {
                 ("{", "block"), ("{", "switch"), ("{", "expression-block")}
@@ -144,7 +163,12 @@ def _js_code(source: str) -> str:
         elif token in {"async", "export", "default"} and statement_start:
             # Declaration prefixes must not turn function/class bodies into values.
             expression_start = True
-        elif token == "debugger" and statement_start:
+        elif token in {"break", "continue"} and statement_boundary:
+            # The optional label belongs to this jump statement. Its next line
+            # starts a new statement even without a written semicolon (ASI).
+            jump_statement = True
+            expression_start = statement_start = False
+        elif token == "debugger" and statement_boundary:
             # A debugger statement ends at its semicolon or automatic insertion;
             # a following regex is a new expression, not division by an identifier.
             expression_start = statement_start = True
@@ -183,7 +207,47 @@ def _js_code(source: str) -> str:
         if token != ")":
             closed_paren = ""
         previous = token
+        line_terminated = False
     return "".join(code)
+
+def _python_code(lines: list[str], *, full_context: bool = False):
+    """Legacy fragments retain complete tokens; omitted lexical context is unknowable."""
+    raw = "\n".join(lines if full_context else (line.lstrip() for line in lines)).encode(
+        "utf-8", "surrogateescape")
+    encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+    source = raw.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+    source_lines = source.split("\n")
+    code = [[" "] * len(line) for line in source_lines]
+    tokens = []
+    try:
+        tokens.extend(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass  # Changed-line fragments need not be complete Python programs.
+    noncode = {tokenize.STRING, tokenize.COMMENT,
+               *(getattr(tokenize, kind, tokenize.STRING)
+                 for kind in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END",
+                              "TSTRING_START", "TSTRING_MIDDLE", "TSTRING_END"))}
+    for token in tokens:
+        if token.type in noncode:
+            continue
+        for row in range(token.start[0], min(token.end[0], len(code)) + 1):
+            start = token.start[1] if row == token.start[0] else 0
+            end = token.end[1] if row == token.end[0] else len(code[row - 1])
+            code[row - 1][start:end] = source_lines[row - 1][start:end]
+    return ["".join(line) for line in code], tokens
+
+
+def _test_fn_names(lines: list[str], language: str) -> set[str]:
+    if language == "python":
+        code, _ = _python_code(lines)
+        return {m.group(1) for line in code if (m := _PY_TEST_FN.match(line))}
+    if language in ("js", "ts"):
+        code = _js_code("\n".join(lines)).split("\n")
+        # Keep the raw call description, but require executable call-prefix syntax.
+        return {m.group(1) for line, masked in zip(lines, code)
+                if (m := _JS_TEST_FN.match(line))
+                and masked[:m.start(1) - 1] == line[:m.start(1) - 1]}
+    return set()
 
 
 def _skip_evidence(
@@ -199,18 +263,14 @@ def _skip_evidence(
         range(1, len(lines) + 1))
     source = "\n".join(lines)
     if language == "python":
-        tokens = []
-        try:
-            # Only legacy fragments need indentation normalization. Full candidate
-            # context must stay intact, including multiline strings across hunks.
-            lexical_source = (source if added_line_numbers is not None else
-                              "\n".join(line.lstrip() for line in lines))
-            for token in tokenize.generate_tokens(io.StringIO(lexical_source).readline):
-                if token.type not in (tokenize.NL, tokenize.INDENT, tokenize.DEDENT,
-                                      tokenize.COMMENT):
-                    tokens.append(token)
-        except (tokenize.TokenError, IndentationError, SyntaxError):
-            pass  # retained tokens still cover complete calls in a partial diff
+        # Tokenization normalizes Python universal newlines; Git coordinates count
+        # only LF. A bare CR must not shift a marker out of its changed Git row.
+        token_rows = [1]
+        for newline in re.finditer(r"\r\n|\r|\n", source):
+            token_rows.append(token_rows[-1] + int("\n" in newline.group()))
+        _, lexical = _python_code(lines, full_context=added_line_numbers is not None)
+        tokens = [t for t in lexical if t.type not in
+                  (tokenize.COMMENT, tokenize.NL, tokenize.INDENT, tokenize.DEDENT)]
         for i, token in enumerate(tokens):
             if token.type != tokenize.NAME or (i and tokens[i - 1].string == "."):
                 continue
@@ -221,63 +281,69 @@ def _skip_evidence(
                 end += 2
             is_call = end < len(tokens) and tokens[end].string == "("
             is_decorator = i > 0 and tokens[i - 1].string == "@"
-            if name in _PY_MARKS or (name in _PY_SKIP_CALLS and (is_call or is_decorator)):
+            if name in _PY_MARKS or (name in _PY_CALLS and (is_call or is_decorator)):
                 marker_tokens = tokens[i - int(is_decorator):end + int(is_call)]
-                marker_rows = {row for t in marker_tokens
-                               for row in range(t.start[0], t.end[0] + 1)}
+                marker_rows = {token_rows[row - 1] for t in marker_tokens
+                               for row in range(t.start[0], t.end[0] + 1)
+                               if row <= len(token_rows)}
                 if changed := marker_rows & added_rows:
                     return lines[min(changed) - 1].strip()
     elif language in ("js", "ts"):
         code = _js_code(source)
+        tokens = iter(_JS_TOKEN.finditer(code))
+        current, previous = next(tokens, None), ""
         for match in _JS_SKIP.finditer(code):
-            start = code.count("\n", 0, match.start()) + 1
-            end = code.count("\n", 0, match.end()) + 1
-            if changed := set(range(start, end + 1)) & added_rows:
+            while current is not None and current.start() < match.start():
+                previous, current = current.group(), next(tokens, None)
+            if previous in {".", "?."}:
+                continue
+            # Comments/whitespace may split an existing marker across lines;
+            # only newly added executable marker tokens establish a new skip.
+            marker_rows = {code.count("\n", 0, token.start()) + 1
+                           for token in _JS_TOKEN.finditer(code, match.start(), match.end())}
+            if changed := marker_rows & added_rows:
                 return lines[min(changed) - 1].strip()
     return None
 
 
-def _test_fn_names(lines: list[str], language: str) -> set[str]:
-    pat = _PY_TEST_FN if language == "python" else _JS_TEST_FN if language in ("js", "ts") else None
-    if pat is None:
-        return set()
-    return {m.group(1) for ln in lines if (m := pat.match(ln))}
-
-
 def check(diff: Diff, root: str) -> list[Finding]:
+    """Analyze only diff facts; never read candidate policy, overrides or dirty files."""
     out: list[Finding] = []
     for f in diff.files:
-        if not f.is_test:
+        if not (f.is_test or _is_test(f.path) or _is_test(f.old_path)):
             continue
-
         if f.status == "D":
             out.append(Finding("deleted-test", Severity.BLOCK,
-                               f"test file deleted: {f.path}", file=f.path))
-            continue  # nothing else to say about a gone file
+                               f"test-related file deleted: {f.path}; review suite coverage",
+                               file=f.path))
+            continue
         if f.status == "R":
             out.append(Finding("renamed-test", Severity.WARN,
-                               f"test file renamed: {f.old_path} -> {f.path}",
-                               file=f.path))
+                               f"test-related file renamed: {f.old_path} -> {f.path}", file=f.path))
             old_discovery = _test_discovery(f.old_path)
             if old_discovery and old_discovery != _test_discovery(f.path):
                 out.append(Finding("test-path-removed", Severity.WARN,
-                                   "test rename loses known default discovery semantics; "
-                                   "verify custom collection/configuration for the new path",
+                                   "rename loses known default test discovery semantics; "
+                                   "review configured collection and preserved verification",
                                    file=f.path, evidence=f"{f.old_path} -> {f.path}"))
-
-        # Copies leave the source test intact; edits with the same name are not removals.
-        gone = (set() if f.status == "C" else
-                _test_fn_names(f.removed, f.old_language or f.language)
-                - _test_fn_names(f.added, f.language))
-        if gone:
-            out.append(Finding("removed-test-fn", Severity.WARN,
-                               f"test function(s) removed: {', '.join(sorted(gone))}",
-                               file=f.path))
-
-        candidate = f.candidate_lines if f.candidate_lines is not None else f.added
-        positions = f.added_line_numbers if f.candidate_lines is not None else None
-        if f.added and (evidence := _skip_evidence(candidate, f.language, positions)):
-            out.append(Finding("added-skip", Severity.WARN,
-                               "a skip/only marker was added to a test", file=f.path,
-                               evidence=evidence))
+        language = f.language or _language(f.path) or _language(f.old_path)
+        try:
+            # Copies introduce additions but leave all source tests intact.
+            gone = (set() if f.status == "C" else
+                    _test_fn_names(f.removed, _language(f.old_path) or language)
+                    - _test_fn_names(f.added, language))
+            if gone:
+                out.append(Finding("removed-test-fn", Severity.WARN,
+                                   f"test-like definition(s) removed from patch: {', '.join(sorted(gone))}; "
+                                   "verify before/after collection", file=f.path))
+            candidate = f.candidate_lines if f.candidate_lines is not None else f.added
+            positions = f.added_line_numbers if f.candidate_lines is not None else None
+            if f.added and (evidence := _skip_evidence(candidate, language, positions)):
+                out.append(Finding("added-skip", Severity.WARN,
+                                   "recognized framework skip/focus syntax added; review intended collection",
+                                   file=f.path, evidence=evidence))
+        except (UnicodeError, LookupError, SyntaxError) as exc:
+            out.append(Finding("integrity-analysis-incomplete", Severity.WARN,
+                               f"cannot decode patch fragment for integrity analysis: {exc}; "
+                               "complete source/encoding context is required", file=f.path))
     return out

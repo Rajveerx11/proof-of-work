@@ -38,17 +38,15 @@ class DiffFile:
     removed: list[str] = field(default_factory=list)    # removed source lines (text, no -)
     is_test: bool = False
     language: str = ""                 # "python" | "js" | "ts" | ""
-    old_language: str = ""             # source language for renames/copies
-    # Real Git snapshots supply full lexical context and 1-based added-line provenance.
-    # Hand-built/corpus diffs may omit context; detectors retain their partial-diff fallback.
-    candidate_lines: list[str] | None = None
-    added_line_numbers: list[int] = field(default_factory=list)
+    candidate_lines: list[str] | None = None  # full Git candidate; None for stored fragments
+    added_line_numbers: list[int] = field(default_factory=list)  # 1-based Git LF rows
 
 
 @dataclass
 class Diff:
     files: list[DiffFile] = field(default_factory=list)
     base_ref: str = "HEAD"
+    base_commit: str = ""               # immutable collector-resolved comparison commit
 
     def languages(self) -> set[str]:
         return {f.language for f in self.files if f.language}
@@ -73,6 +71,11 @@ class TestResult:
     js_coverage: float | None = None   # separate JS/TS percentage in mixed suites
     framework: str = ""                # pytest | vitest | jest
     raw: str = ""                      # captured tail, for debugging
+    suite_base: str = ""               # immutable reviewed config commit (configured mode)
+    evidence: str = ""                 # exit-code only; not whole-candidate attestation
+    required_suites: list[str] = field(default_factory=list)
+    executed_suites: list[str] = field(default_factory=list)
+    suites: list[dict] = field(default_factory=list)  # id, outcome, exit_code, raw
 
 
 @dataclass
@@ -93,7 +96,10 @@ class Verdict:
     coverage_baseline: float | None = None
     judge: dict | None = None          # advisory metadata ONLY — never decides `passed`
     entry_hash: str = ""               # tamper-evident log row hash
-    integrity_policy: str = "advisory-v1"  # trusted caller's enforced integrity policy
+    coverage_policy: str = "required"
+    integrity_policy: str = "strict"   # effective trusted-caller enforcement mode
+    execution_mode: str = "detector-only"
+    coverage_status: str = "not-run"   # verified | not-verified | not-run
 
     def as_dict(self) -> dict:
         return {
@@ -105,5 +111,8 @@ class Verdict:
             "coverage_baseline": self.coverage_baseline,
             "judge": self.judge,
             "entry_hash": self.entry_hash,
+            "coverage_policy": self.coverage_policy,
             "integrity_policy": self.integrity_policy,
+            "execution_mode": self.execution_mode,
+            "coverage_status": self.coverage_status,
         }

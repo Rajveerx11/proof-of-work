@@ -1,9 +1,8 @@
 """Parse a git changeset into the frozen Diff/DiffFile contract via git plumbing.
 
-`--name-status -z` supplies authoritative statuses/renames; full-context patches
-supply added/removed lines, candidate lexical context, and added-line coordinates.
-Copies also use a no-renames patch to inspect the entire new destination, even when
-Git's copy patch has no hunks. Cached patches never read dirty working-tree text.
+`--name-status -z` supplies authoritative statuses/rename/copy paths. Full-context
+patches supply candidate lexical context and added-line coordinates. Copies also
+use a no-renames patch for the entire destination; staged diffs use only the index.
 """
 from __future__ import annotations
 
@@ -14,18 +13,18 @@ import subprocess
 
 from ..types import Diff, DiffFile
 
+_FULL_CONTEXT = "--unified=2147483647"
+
 _TEST_DIR_MARKERS = ("/tests/", "/test/", "/__tests__/")
 _LANG = {
     ".py": "python",
     ".js": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js",
-    ".mjsx": "js", ".cjsx": "js",
     ".ts": "ts", ".tsx": "ts", ".mts": "ts", ".cts": "ts",
-    ".mtsx": "ts", ".ctsx": "ts",
+    ".mjsx": "js", ".cjsx": "js", ".mtsx": "ts", ".ctsx": "ts",
 }
-_JS_TEST_SUFFIX = re.compile(r"\.(?:test|spec)\.[cm]?[jt]sx?$")
+_JS_TEST_SUFFIX = re.compile(r"\.(?:test|spec)\.[cm]?[jt]s(?:x)?$")
 _PY_NORECURSEDIRS = ("*.egg", ".*", "_darcs", "build", "CVS", "dist",
                      "node_modules", "venv", "{arch}")
-_FULL_CONTEXT = "--unified=2147483647"
 
 
 def _language(path: str) -> str:
@@ -34,8 +33,8 @@ def _language(path: str) -> str:
 
 
 def _is_test(path: str) -> bool:
-    p = path.replace("\\", "/")
-    low = p.lower()
+    # Git uses '/' separators; a backslash is a literal filename character.
+    low = path.lower()
     base = low.rsplit("/", 1)[-1]
     if base.startswith("test_") and base.endswith(".py"):
         return True
@@ -47,26 +46,19 @@ def _is_test(path: str) -> bool:
 
 
 def _test_discovery(path: str) -> str:
-    """Known default collection families, not proof of configured discovery.
-
-    Keep this narrower than _is_test: a helper under tests/ is test-related but
-    is not necessarily a collected test. JS __tests__ is a Jest default, not Vitest's.
-    Explicit custom includes/excludes and environment-directory detection remain
-    outside this path-only heuristic.
-    """
-    p = path.replace("\\", "/")
-    base = p.rsplit("/", 1)[-1]
-    language = _language(path)
-    if base.endswith(".py") and (base.startswith("test_") or base.endswith("_test.py")):
-        directories = p.split("/")[:-1]
-        if any(fnmatch.fnmatch(part, pattern)
-               for part in directories for pattern in _PY_NORECURSEDIRS):
-            return ""
-        return "python"
-    if language in ("js", "ts") and (
-        _JS_TEST_SUFFIX.search(base) or "/__tests__/" in "/" + p
+    """Known default collection family, not proof of custom collection/configuration."""
+    base = path.rsplit("/", 1)[-1]
+    directories = path.split("/")[:-1]
+    # pytest has a literal .py guard followed by platform-aware filename matching.
+    if base.endswith(".py") and any(fnmatch.fnmatch(base, pattern)
+                                    for pattern in ("test_*.py", "*_test.py")):
+        return "" if any(fnmatch.fnmatch(part, pattern) for part in directories
+                         for pattern in _PY_NORECURSEDIRS) else "python"
+    if _language(path) in ("js", "ts") and (
+        _JS_TEST_SUFFIX.search(base) or "__tests__" in directories
     ):
-        return "" if "node_modules" in p.split("/")[:-1] else "js"
+        # __tests__ is a Jest default, not a Vitest default.
+        return "" if "node_modules" in directories else "js"
     return ""
 
 
@@ -82,35 +74,35 @@ def _git(root: str, *args: str) -> str:
     if cp.returncode != 0:
         detail = cp.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
-    # Universal newline translation would corrupt CR-containing NUL-delimited paths.
+    # No universal newline conversion: CRs may belong to NUL-delimited paths.
     return cp.stdout.decode("utf-8", errors="surrogateescape")
 
 
 def _parse_name_status(out: str) -> list[tuple[str, str, str]]:
-    """-> [(status, path, old_path)]. status normalized to A/M/D/R/C."""
-    toks = out.split("\0")
+    """-> [(status, path, old_path)]; retain C and reject incomplete/unmerged input."""
+    if out and not out.endswith("\0"):
+        raise ValueError("unterminated Git name-status output")
+    toks = out.split("\0")[:-1]
     i, files = 0, []
     while i < len(toks):
         st = toks[i]
-        if not st:
-            i += 1
-            continue
+        if not re.fullmatch(r"[ADMT]|[RC](?:\d{1,3})?", st):
+            raise ValueError("unsupported or unmerged Git status")
         code = st[0]
-        if code in ("R", "C"):  # rename/copy: two paths follow
-            old = toks[i + 1] if i + 1 < len(toks) else ""
-            new = toks[i + 2] if i + 2 < len(toks) else ""
-            files.append((code, new, old))
-            i += 3
+        count = 2 if code in ("R", "C") else 1
+        paths = toks[i + 1:i + count + 1]
+        if len(paths) != count or not all(paths):
+            raise ValueError("incomplete Git name-status paths")
+        if count == 2:
+            files.append((code, paths[1], paths[0]))
         else:
-            path = toks[i + 1] if i + 1 < len(toks) else ""
-            norm = code if code in ("A", "M", "D") else "M"  # T (typechange) -> M
-            files.append((norm, path, ""))
-            i += 2
+            files.append(("M" if code == "T" else code, paths[0], ""))
+        i += count + 1
     return files
 
 
 def _patch_path(value: str) -> str | None:
-    """Decode Git's C-quoted patch paths (name-status paths are already NUL-delimited)."""
+    """Decode Git's C-quoted patch path; name-status paths are already raw/NUL-delimited."""
     if value == "/dev/null":
         return None
     if value.startswith('"'):
@@ -119,12 +111,12 @@ def _patch_path(value: str) -> str | None:
         escapes = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13}
         while i < len(value) and value[i] != '"':
             if value[i] != "\\":
-                raw.extend(value[i].encode("utf-8", errors="surrogateescape"))
+                raw.extend(value[i].encode("utf-8", "surrogateescape"))
                 i += 1
                 continue
             i += 1
             if i >= len(value):
-                raise ValueError("unterminated escape in quoted Git path")
+                raise ValueError("unterminated quoted Git path escape")
             if value[i] in "01234567":
                 end = i + 1
                 while end < min(i + 3, len(value)) and value[end] in "01234567":
@@ -132,13 +124,14 @@ def _patch_path(value: str) -> str | None:
                 raw.append(int(value[i:end], 8))
                 i = end
             else:
-                raw.extend(bytes([escapes[value[i]]]) if value[i] in escapes
-                           else value[i].encode("utf-8", errors="surrogateescape"))
+                raw.extend(bytes([escapes[value[i]]]) if value[i] in escapes else
+                           value[i].encode("utf-8", "surrogateescape"))
                 i += 1
-        value = raw.decode("utf-8", errors="surrogateescape")
+        if i == len(value):
+            raise ValueError("unterminated quoted Git path")
+        value = raw.decode("utf-8", "surrogateescape")
     else:
-        # Git terminates an unquoted header containing spaces with a tab.
-        value = value.split("\t", 1)[0]
+        value = value.split("\t", 1)[0]  # Git appends a tab to unquoted spaced headers.
     return value[2:] if value[:2] in ("a/", "b/") else value
 
 
@@ -156,7 +149,6 @@ def _parse_unified(
     in_hunk = False
     new_line = 0
     for line in out.split("\n"):
-        line = line.removesuffix("\r")
         if line.startswith("diff --git "):
             old = new = key = None
             in_hunk = False
@@ -269,8 +261,7 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
             added=list(added), removed=list(removed),
             is_test=_is_test(path) or _is_test(old_path),
             language=_language(path) or _language(old_path),
-            old_language=_language(old_path),
             candidate_lines=(copy_context if status == "C" else context).get(path, (None, []))[0],
             added_line_numbers=(copy_context if status == "C" else context).get(path, (None, []))[1],
         ))
-    return Diff(files=files, base_ref=base_ref)
+    return Diff(files=files, base_ref=base_ref, base_commit=commit)

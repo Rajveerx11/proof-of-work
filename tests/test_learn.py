@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from proofofwork.core.detector import learned
+from proofofwork.core.detector import ALL_CHECKS, learned
 from proofofwork.core.gitdiff import parse_patch
 from proofofwork.learn import corpus, loop, propose
 from proofofwork.learn.gate import evaluate
@@ -66,42 +66,47 @@ def test_gate_accepts_clean_specific_catch():
 # --- full loop ---
 
 @pytest.fixture
-def corpus_with_missed_alias(monkeypatch):
-    # Module-level pytestmark is now built-in; aliases remain outside its lexical
-    # matching. Keep a real missed skip to exercise promotion and idempotence.
-    cheats = corpus.cheats() + [("aliased_skip.diff", parse_patch(
+def novel_missed_cheat(monkeypatch):
+    """Synthetic frozen label: a custom disable hook unknown to the built-ins."""
+    name = "novel_custom_disable.diff"
+    cheat = parse_patch(
         "diff --git a/tests/test_x.py b/tests/test_x.py\n"
-        "--- a/tests/test_x.py\n+++ b/tests/test_x.py\n@@ -0,0 +1,2 @@\n"
-        "+import pytest as pt\n+pytestmark = pt.mark.skip(reason='later')\n",
-    ))]
-    monkeypatch.setattr(corpus, "cheats", lambda: cheats)
-    return cheats
+        "--- a/tests/test_x.py\n+++ b/tests/test_x.py\n"
+        "@@ -1,0 +2 @@\n+    custom_runner.disable_verification()\n")
+    assert not any(f.severity in (Severity.BLOCK, Severity.WARN)
+                   for check in ALL_CHECKS for f in check(cheat, "."))
+    frozen = corpus.cheats()
+    monkeypatch.setattr(corpus, "cheats", lambda: [*frozen, (name, cheat)])
+    return name, cheat
 
 
-def test_loop_promotes_missed_and_skips_caught(tmp_path, corpus_with_missed_alias):
+def test_loop_promotes_missed_and_skips_caught(tmp_path, novel_missed_cheat):
     rules_file = tmp_path / "learned.json"
     rules_file.write_text(json.dumps({"ruleset_version": 1, "rules": []}))
 
     res = loop.run(rules_path=str(rules_file), write=True)
     skipped = dict(res.skipped)
 
-    assert any("aliased_skip" in r["source"] for r in res.promoted)
+    # Improved built-ins catch both frozen cases; only the novel hook is learned.
+    name, cheat = novel_missed_cheat
+    assert any(name in r["source"] for r in res.promoted)
     assert skipped.get("module_skip.diff") == "already caught"
     assert skipped.get("sys_exit_fake.diff") == "already caught"
 
-    # the promoted rule is now live: the detector catches the once-missed cheat
+    # The promoted rule is now live: the detector catches the once-missed cheat.
     rules = learned.load_rules(str(rules_file))
-    _, cheat = next(c for c in corpus_with_missed_alias if c[0] == "aliased_skip.diff")
     findings = learned.apply_rules(cheat, rules)
     assert any(f.severity in (Severity.BLOCK, Severity.WARN) for f in findings)
 
 
-def test_loop_is_idempotent(tmp_path, corpus_with_missed_alias):
+def test_loop_is_idempotent(tmp_path, novel_missed_cheat):
     rules_file = tmp_path / "learned.json"
     rules_file.write_text(json.dumps({"ruleset_version": 1, "rules": []}))
 
     first = loop.run(rules_path=str(rules_file), write=True)
-    assert first.promoted
+    assert any(novel_missed_cheat[0] in r["source"] for r in first.promoted)
+    written = rules_file.read_bytes()
     second = loop.run(rules_path=str(rules_file), write=True)
     assert second.promoted == []  # add-only: a second pass learns nothing new
     assert all(why == "already caught" for _, why in second.skipped)
+    assert rules_file.read_bytes() == written

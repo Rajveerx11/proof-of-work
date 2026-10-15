@@ -128,3 +128,29 @@ def test_read_baseline_ignores_malformed_file(tmp_path):
     assert read_baseline(str(tmp_path)) is None
     path.write_text('{"coverage": true}')
     assert read_baseline(str(tmp_path)) is None
+
+
+def test_required_coverage_is_explicit_and_legacy_information_remains():
+    result = TestResult(ran=True, passed=True, framework="pytest")
+    assert coverage_findings(result, 90)[0].severity == Severity.INFO
+    assert coverage_findings(result, 90, require_coverage=True)[0].severity == Severity.BLOCK
+
+
+def test_mixed_test_only_routes_policy_without_collecting_coverage(monkeypatch, tmp_path):
+    calls = []
+
+    def python(*args, **kwargs):
+        assert kwargs["collect_coverage"] is False
+        calls.append("python")
+        return TestResult(ran=True, passed=True, framework="pytest")
+
+    def javascript(*args, **kwargs):
+        assert kwargs["collect_coverage"] is False
+        calls.append("js")
+        return TestResult(ran=True, passed=True, framework="jest")
+
+    monkeypatch.setattr(runner, "_run_python", python)
+    monkeypatch.setattr(runner, "_run_js", javascript)
+    result = run_tests(LocalSandbox(), str(tmp_path), {"python", "ts"}, collect_coverage=False)
+    assert calls == ["python", "js"] and result.ran and result.passed
+    assert result.coverage is None and result.js_coverage is None
