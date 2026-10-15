@@ -70,6 +70,19 @@ def _capture_coverage_baseline(root: str, diff: Diff, base_ref: str,
     return existing, float(value) if valid_coverage(value) else None, metadata
 
 
+def _execution_languages(diff: Diff) -> set[str]:
+    """Dependency-only root Python changes still require the Python suite.
+
+    Keep detector classifications tied to source syntax. Old paths matter when a
+    manifest is removed or renamed; unrelated/nested TOML files are not inferred.
+    """
+    languages = diff.languages()
+    if any(path in {"pyproject.toml", "uv.lock"}
+           for file in diff.files for path in (file.path, file.old_path)):
+        languages.add("python")
+    return languages
+
+
 def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           run_tests: bool = True, run_mutation: bool = False, use_judge: bool = False,
           update_baseline: bool = False, db_path: str | None = None,
@@ -119,6 +132,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                        coverage_policy=coverage_policy, integrity_policy=integrity_policy,
                        execution_mode=execution_mode, coverage_status=coverage_status)
 
+    execution_languages = _execution_languages(diff)
     findings: list[Finding] = list(extra_findings or ())
     tests = TestResult()
     existing_baseline = False
@@ -205,7 +219,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         try:
             from .core.detector.coverage_delta import coverage_identity, valid_coverage
             # Measure before candidate detectors/tests can alter dependencies or policy inputs.
-            measured_base = _measure_base(root, diff.base_commit, diff.languages())
+            measured_base = _measure_base(root, diff.base_commit, execution_languages)
             values = [measured_base.coverage]
             if "+" in measured_base.framework:
                 values.append(measured_base.js_coverage)
@@ -262,13 +276,13 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             coverage_args = {} if coverage_policy == "required" else {"collect_coverage": False}
             if staged:
                 with _index_snapshot(root) as (snapshot, directory):
-                    _prepare_staged_dependencies(root, snapshot, diff.languages())
+                    _prepare_staged_dependencies(root, snapshot, execution_languages)
                     python_env = (_staged_python_env(root, snapshot, directory)
-                                  if "python" in diff.languages() else None)
-                    tests = _run(get_sandbox("local"), snapshot, diff.languages(),
+                                  if "python" in execution_languages else None)
+                    tests = _run(get_sandbox("local"), snapshot, execution_languages,
                                  **({"python_env": python_env} if python_env else {}), **coverage_args)
             else:
-                tests = _run(get_sandbox("local"), root, diff.languages(), **coverage_args)
+                tests = _run(get_sandbox("local"), root, execution_languages, **coverage_args)
             if coverage_policy == "required":
                 values = [tests.coverage]
                 if "+" in tests.framework:
@@ -329,7 +343,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                                     "detector-only checks cannot execute mutation; omit --no-tests"))
         else:
             from .core.mutation import run_mutation as _mut
-            mutation = _mut(root, diff.languages())
+            mutation = _mut(root, execution_languages)
             if mutation.ran and mutation.survived:
                 findings.append(Finding(rule="mutation:survivors", severity=Severity.WARN,
                     message=f"{mutation.survived} mutant(s) survived — tests may be gutted"))

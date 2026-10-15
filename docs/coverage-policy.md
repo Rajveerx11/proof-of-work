@@ -207,3 +207,11 @@ and dependency mismatch rejection. Run it locally with Node 24/npm and:
 ```bash
 uv run --frozen --extra dev python -m pytest -q integration/test_js_coverage.py
 ```
+
+Changes to the root `pyproject.toml` or `uv.lock` require the Python suite even
+when no Python source file changed. Removal and renaming retain that requirement,
+and mixed Python/JS changes still require both suites. This execution selection
+does not classify manifests as Python source for detectors or authorize dependency
+reuse: changed dependency inputs still require an independently reviewed committed
+coverage floor instead of measuring the base with candidate dependencies. Nested
+manifests and other dependency managers are not inferred by this root-only rule.
