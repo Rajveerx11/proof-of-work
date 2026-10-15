@@ -444,7 +444,7 @@ def _check_base_dependencies(root: str, snapshot: str, languages: set[str]) -> N
     names = set()
     if "python" in languages:
         names.update({"pyproject.toml", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock",
-                      "setup.py", "setup.cfg", "pdm.lock", ".python-version", "requirements.txt"})
+                      "setup.py", "setup.cfg", "pdm.lock", ".python-version", "requirements.txt", "uv.toml"})
     if languages.intersection({"js", "ts"}):
         names.update({"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
                       "pnpm-lock.yaml", "pnpm-workspace.yaml", "bun.lock", "bun.lockb",
@@ -455,19 +455,18 @@ def _check_base_dependencies(root: str, snapshot: str, languages: set[str]) -> N
             dirs[:] = [d for d in dirs if d not in {".git", "node_modules", ".venv", "venv",
                                                    "__pycache__", ".proofofwork"}]
             for name in files:
-                if name in names or ("python" in languages and name.startswith("requirements")
-                                     and name.endswith((".txt", ".in"))):
+                if name in names or ("python" in languages and name.startswith("requirements")):
                     path = Path(parent) / name
                     if path.is_symlink():
                         raise ValueError("base measurement cannot reuse linked dependency inputs")
                     found[path.relative_to(directory).as_posix()] = path.read_bytes()
-        if "python" in languages:
-            _include_python_dependency_inputs(Path(directory), found)
         return found
     candidate, base = inputs(root), inputs(snapshot)
     if candidate != base:
         raise ValueError("base dependency inputs differ from candidate; install and measure "
                          "the reviewed base independently instead of reusing candidate dependencies")
+    if "python" in languages:
+        _validate_python_dependency_inputs(base)
     if languages.intersection({"js", "ts"}):
         package = json.loads(base.get("package.json", b"{}"))
         if (package.get("workspaces") or "pnpm-workspace.yaml" in base
@@ -482,81 +481,88 @@ def _check_base_dependencies(root: str, snapshot: str, languages: set[str]) -> N
             raise ValueError("frozen-base JS measurement requires a matching dependency lockfile")
 
 
-def _include_python_dependency_inputs(root: Path, found: dict[str, bytes]) -> None:
-    """Follow pip includes; reject dependency inputs whose source cannot be bounded."""
+def _validate_python_dependency_inputs(found: dict[str, bytes]) -> None:
+    """Support static root uv projects and fixtures without declared dependencies.
+
+    This optional reuse mode cannot infer arbitrary manager/build behavior. Refuse
+    other declared layouts; callers can provision a reviewed baseline independently.
+    """
     import re
-    import shlex
     import tomllib
     from urllib.parse import urlsplit
 
-    def local_reference(value):
-        reference = re.match(r"^[\w.-]+(?:\[[^]]+\])?\s*@\s*(\S+)", value)
-        return "file:" in value or (reference is not None and urlsplit(reference[1]).scheme
-                                    not in {"https", "http", "git+https", "git+ssh"})
+    # JS inputs are independently checked for mixed projects.
+    python_inputs = {name: value for name, value in found.items()
+                     if Path(name).name in {"pyproject.toml", "uv.lock", "poetry.lock", "Pipfile",
+                                            "Pipfile.lock", "setup.py", "setup.cfg", "pdm.lock",
+                                            ".python-version", "uv.toml"}
+                     or Path(name).name.startswith("requirements")}
+    if set(python_inputs) - {"pyproject.toml", "uv.lock", ".python-version"}:
+        raise ValueError("unsupported Python dependency layout requires independent base provisioning; "
+                         "reuse supports only a static root pyproject.toml with uv.lock")
+    if "pyproject.toml" not in python_inputs:
+        if "uv.lock" in python_inputs:
+            raise ValueError("uv.lock requires a matching static root pyproject.toml")
+        return
+    if "uv.lock" not in python_inputs:
+        raise ValueError("Python dependency reuse requires matching root uv.lock")
+    project = tomllib.loads(python_inputs["pyproject.toml"].decode("utf-8"))
+    if set(project) - {"project", "build-system", "dependency-groups", "tool"}:
+        raise ValueError("custom Python metadata requires independent base provisioning")
 
-    active = set()
-    visited = set()
-    def requirements(relative):
-        if relative in active:
-            raise ValueError("cyclic pip dependency includes are unsupported")
-        if relative in visited:
-            return
-        active.add(relative)
-        path = root / relative
-        logical = found[relative].decode("utf-8").replace("\\\n", "")
-        for line in logical.splitlines():
-            words = shlex.split(line, comments=True)
-            if not words:
-                continue
-            first = words[0]
-            include = None
-            for short, long in (("-r", "--requirement"), ("-c", "--constraint")):
-                if first in (short, long):
-                    if len(words) != 2:
-                        raise ValueError("invalid pip dependency include")
-                    include = words[1]
-                elif first.startswith(long + "="):
-                    include = first[len(long) + 1:]
-                elif first.startswith(short) and not first.startswith("--"):
-                    include = first[len(short):]
-            if include is not None:
-                if not include or ":" in include or "$" in include or "~" in include:
-                    raise ValueError("only fixed local pip dependency includes are supported")
-                target = path.parent / include
-                resolved = target.resolve()
-                if (not resolved.is_relative_to(root.resolve()) or not target.is_file()
-                        or any(part.is_symlink() for part in (target, *target.parents))):
-                    raise ValueError("pip dependency include escapes the root or uses a linked/missing file")
-                name = resolved.relative_to(root.resolve()).as_posix()
-                found[name] = target.read_bytes()
-                requirements(name)
-            elif (first.startswith(("-e", "--editable", ".", "/", "file:"))
-                  or local_reference(line) or (path.parent / first).is_dir()
-                  or first.endswith((".whl", ".tar.gz", ".zip"))):
-                raise ValueError("local Python dependency sources require independent base provisioning")
-        active.remove(relative)
-        visited.add(relative)
+    def strings(value):
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise TypeError("static Python dependency fields must be lists of strings")
+        return value
 
-    for name in list(found):
-        if Path(name).name.startswith("requirements") and name.endswith((".txt", ".in")):
-            requirements(name)
-        elif Path(name).name in {"setup.py", "setup.cfg", "Pipfile"}:
-            raise ValueError("legacy/dynamic Python dependency inputs require independent base provisioning")
-        elif Path(name).name == "pyproject.toml":
-            project = tomllib.loads(found[name].decode("utf-8"))
-            metadata = project.get("project", {})
-            if set(metadata.get("dynamic", ())) & {"dependencies", "optional-dependencies"}:
-                raise ValueError("dynamic Python dependencies require independent base provisioning")
-            tool = project.get("tool", {})
-            if (tool.get("uv", {}).get("sources") or tool.get("uv", {}).get("workspace")
-                    or tool.get("poetry") or tool.get("pdm")):
-                raise ValueError("custom Python dependency sources require independent base provisioning")
-            dependencies = list(metadata.get("dependencies", ()))
-            for values in metadata.get("optional-dependencies", {}).values():
-                dependencies.extend(values)
-            dependencies.extend(_python_group_dependencies(project.get("dependency-groups", {})))
-            if any(local_reference(value) for value in dependencies):
-                raise ValueError("local Python dependency sources require independent base provisioning")
+    metadata = project.get("project", {})
+    locked = tomllib.loads(python_inputs["uv.lock"].decode("utf-8"))
+    if type(locked.get("version")) is not int or locked["version"] != 1:
+        raise ValueError("unsupported uv lock version requires independent base provisioning")
+    for package in locked.get("package", []):
+        source = package.get("source", {})
+        own_root = (source == {"editable": "."} and metadata.get("name")
+                    and re.sub(r"[-_.]+", "-", package.get("name", "")).lower()
+                    == re.sub(r"[-_.]+", "-", metadata["name"]).lower())
+        registry = (set(source) == {"registry"}
+                    and urlsplit(source["registry"]).scheme == "https")
+        if not own_root and not registry:
+            raise ValueError("unsupported/local uv lock source requires independent base provisioning")
+        artifacts = list(package.get("wheels", []))
+        if "sdist" in package:
+            artifacts.append(package["sdist"])
+        if any(urlsplit(artifact.get("url", "")).scheme != "https" for artifact in artifacts):
+            raise ValueError("local uv lock artifacts require independent base provisioning")
+    if set(strings(metadata.get("dynamic", []))) & {"dependencies", "optional-dependencies"}:
+        raise ValueError("dynamic Python dependencies require independent base provisioning")
+    build = project.get("build-system", {})
+    tool = project.get("tool", {})
+    allowed_tools = {"pytest", "ruff", "coverage", "black", "isort", "mypy", "pyright", "hatch"}
+    hatch = tool.get("hatch", {})
+    hatch_build = hatch.get("build", {})
+    targets = hatch_build.get("targets", {})
+    wheel = targets.get("wheel", {})
+    if ("backend-path" in build or set(tool) - allowed_tools
+            or set(hatch) - {"build"} or set(hatch_build) - {"targets"}
+            or set(targets) - {"wheel"} or set(wheel) - {"packages"}):
+        raise ValueError("custom/local Python dependency layouts require independent base provisioning")
+    if "packages" in wheel:
+        strings(wheel["packages"])
+    dependencies = list(strings(metadata.get("dependencies", [])))
+    dependencies.extend(strings(build.get("requires", [])))
+    optional = metadata.get("optional-dependencies", {})
+    if not isinstance(optional, dict):
+        raise TypeError("optional Python dependencies must map group names to string lists")
+    for values in optional.values():
+        dependencies.extend(strings(values))
+    dependencies.extend(_python_group_dependencies(project.get("dependency-groups", {})))
+    for value in dependencies:
+        value = value.strip()
+        reference = re.match(r"^[\w.-]+\s*(?:\[[^]]+\])?\s*@\s*(\S+)", value)
+        if ("$" in value or "file:" in value or value.startswith((".", "/", "~"))
+                or (reference is not None and urlsplit(reference[1]).scheme
+                    not in {"https", "http", "git+https", "git+ssh"})):
+            raise ValueError("local/dynamic Python dependencies require independent base provisioning")
 
 
 def _python_group_dependencies(groups: dict) -> list[str]:
