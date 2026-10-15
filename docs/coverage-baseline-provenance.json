@@ -1,0 +1,122 @@
+{
+  "source_sha": "993580776f53b9bdc21fd34fd75c953264ae386e",
+  "source_tree": "1744a1834b35f5c8362e0635ae253be7349d5b41",
+  "uv_lock_sha256": "7f88567a07a295167857501889518a6289132cb8684c61c10acc535df3e8b887",
+  "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "executable": "/workspace/pr-worktrees/baseline-source/.venv/bin/python",
+  "project_module": "/workspace/pr-worktrees/baseline-source/proofofwork/__init__.py",
+  "coverage_module": "/workspace/pr-worktrees/baseline-source/.venv/lib/python3.12/site-packages/coverage/__init__.py",
+  "packages": {
+    "coverage": "7.13.5",
+    "pytest": "9.1.1",
+    "ruff": "0.16.8",
+    "proof-of-work-agent": "0.2.0"
+  },
+  "uv": "uv 0.12.23 (x86_64-unknown-linux-gnu)",
+  "metric": "project-lines-v1",
+  "languages": [
+    "python"
+  ],
+  "scope": "separate reviewed source checkout, independently frozen-lock provisioned environment",
+  "started_at": "2026-10-15T05:50:38.652129+00:00",
+  "commands": [
+    {
+      "cmd": [
+        "/workspace/pr-worktrees/baseline-source/.venv/bin/python",
+        "-c",
+        "import pytest"
+      ],
+      "cwd": "/workspace/pr-worktrees/baseline-source",
+      "timeout": 30,
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "cmd": [
+        "/workspace/pr-worktrees/baseline-source/.venv/bin/python",
+        "-c",
+        "import coverage"
+      ],
+      "cwd": "/workspace/pr-worktrees/baseline-source",
+      "timeout": 30,
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "cmd": [
+        "/workspace/pr-worktrees/baseline-source/.venv/bin/python",
+        "-m",
+        "coverage",
+        "run",
+        "--rcfile",
+        "/tmp/proofofwork-python-run-1z0nj_bq/coverage.ini",
+        "--source",
+        "/workspace/pr-worktrees/baseline-source",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "proofofwork_python_run_1z0nj_bq_witness"
+      ],
+      "cwd": "/workspace/pr-worktrees/baseline-source",
+      "timeout": 600,
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "cmd": [
+        "/workspace/pr-worktrees/baseline-source/.venv/bin/python",
+        "-m",
+        "coverage",
+        "json",
+        "--rcfile",
+        "/tmp/proofofwork-python-run-1z0nj_bq/coverage.ini",
+        "-o",
+        "/tmp/proofofwork-python-run-1z0nj_bq/coverage.json"
+      ],
+      "cwd": "/workspace/pr-worktrees/baseline-source",
+      "timeout": 120,
+      "exit_code": 0,
+      "timed_out": false
+    }
+  ],
+  "result": {
+    "ran": true,
+    "passed": true,
+    "coverage": 92.56814921090387,
+    "js_coverage": null,
+    "framework": "pytest",
+    "raw": "........................................................................ [  7%]\n........................................................................ [ 15%]\n........................................................................ [ 23%]\n................ssss.................................................... [ 30%]\n........................................................................ [ 38%]\n........................................................................ [ 46%]\n............................................sss......................... [ 53%]\n........................................................................ [ 61%]\n........................................................................ [ 69%]\n........................................................................ [ 77%]\n........................................................................ [ 84%]\n........................................................................ [ 92%]\n......................................................................   [100%]\n927 passed, 7 skipped in 90.94s (0:01:30)\n",
+    "suite_base": "",
+    "evidence": "",
+    "required_suites": [],
+    "executed_suites": [],
+    "suites": []
+  },
+  "completed_at": "2026-10-15T05:52:13.511061+00:00",
+  "coverage_totals": {
+    "covered_lines": 6452,
+    "num_statements": 6970,
+    "percent_covered": 92.56814921090387,
+    "percent_covered_display": "93",
+    "missing_lines": 518,
+    "excluded_lines": 5,
+    "percent_statements_covered": 92.56814921090387,
+    "percent_statements_covered_display": "93"
+  },
+  "post_status": "",
+  "post_sha": "993580776f53b9bdc21fd34fd75c953264ae386e",
+  "artifacts_sha256": {
+    "coverage.data": "19e70fbb5d7aa3733ad3ed1f85663bb2316c9d509839ae8f29c45d9270e09b46",
+    "command-4.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "command-2.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "command-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "command-4.stdout.txt": "5a0444f747381a186abd423afe943b588d5df4639137089f62d122d73ebd8e47",
+    "command-3.stdout.txt": "778a15ebfeafa931df830aae91c2a38339919e3f4206b7f7d5c287efe97bae68",
+    "command-1.stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed.json": "7522f0d43cfda26bd6a56df88c832070d4d6042ee566b5ab95835065402baff7",
+    "coverage.json": "ad0b832bfb68ded67272a8fad99276833b06047f4f33828eb8db11296bc0465f",
+    "command-2.stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "command-3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

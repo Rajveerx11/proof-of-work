@@ -218,3 +218,48 @@ require independent base provisioning; no pip directive parser or alternative
 manager inference is attempted. This bounded static-input check does not attest
 arbitrary build code or installed artifacts. Default stored-baseline checks are
 unchanged.
+
+Changes to the root `pyproject.toml` or `uv.lock` require the Python suite even
+when no Python source file changed. Removal and renaming retain that requirement,
+and mixed Python/JS changes still require both suites. This execution selection
+does not classify manifests as Python source for detectors or authorize dependency
+reuse: changed dependency inputs still require an independently reviewed committed
+coverage floor instead of measuring the base with candidate dependencies. Nested
+manifests and other dependency managers are not inferred by this root-only rule.
+
+## Reviewing this repository's committed floor
+
+The adopted [baseline](../.proofofwork/baseline.json) is exactly
+`92.56814921090387%`: 6,452 covered lines out of 6,970 statements, measured from
+reviewed main commit `993580776f53b9bdc21fd34fd75c953264ae386e`. The independent run
+passed 927 tests with 7 platform-specific skips. Its unmodified
+[provenance record](coverage-baseline-provenance.json),
+[coverage report](../reports/coverage-baseline/coverage.json),
+[execution witness](../reports/coverage-baseline/executed.json), and
+[test output](../reports/coverage-baseline/command-3.stdout.txt) record the source
+and evidence used for review. Artifact hashes in the provenance retain their
+original filenames; the binary coverage database and empty command logs are not
+committed. Absolute paths identify the original independent measurement checkout.
+
+Dependency updates must compare against a floor measured independently from an
+already reviewed `main` commit. Provision that exact commit in a separate clean
+checkout with its own Python 3.12 environment using `uv sync --frozen --extra dev`.
+Do not reuse the dependency update's environment, editable installation, or Python
+path. Run the source commit's real Python coverage runner, require passing test
+execution and a valid project-line coverage report, and retain its report and
+execution witness.
+
+Review the measurement's source commit and tree, lockfile digest, installed Python,
+pytest and coverage versions, executed commands, test results, line totals and
+report digest before adopting the floor. The provenance record is review evidence;
+the engine enforces the baseline's `coverage`, `metric` and `languages` fields, not
+environment attestation. An instrumentation upgrade needs its own comparability
+review; a lower candidate measurement cannot authorize replacing the floor.
+
+The adoption change must pass the existing required-coverage self-check against
+its immutable base. When that base has no committed floor, explicit base measurement
+provides the comparison; candidate baseline bytes never authorize the adoption
+change's own result. After adoption merges, dependency updates read the reviewed
+floor from their immutable base and execute the required Python suite. Keep
+dependency-mismatch rejection, strict integrity checks and coverage thresholds
+unchanged throughout this sequence.
