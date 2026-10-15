@@ -407,3 +407,6 @@ ships with a test proving it does not. This repo gates its own PRs with Proof-of
 
 [Apache License 2.0](LICENSE). The deterministic detector, CLI, hook, and Action are open and
 free.
+
+When a reviewed base has no coverage baseline, `proof-of-work check --base REF --measure-base-coverage` explicitly measures that immutable base with compatible
+installed dependencies; see [coverage policy](docs/coverage-policy.md#explicit-frozen-base-measurement).

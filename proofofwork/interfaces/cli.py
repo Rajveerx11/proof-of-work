@@ -25,6 +25,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         update_baseline=args.update_baseline,
         db_path=args.db,
         coverage_policy=args.coverage_policy,
+        measure_base_coverage=args.measure_base_coverage,
         integrity_policy=args.integrity_policy,
         sandbox_kind=args.sandbox,
         sandbox_image=args.sandbox_image,
@@ -328,6 +329,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="explicit reviewed ref for .proofofwork/suites.json (commit-pinned)")
     c.add_argument("--staged", action="store_true")
     c.add_argument("--no-tests", action="store_true", help="detector-only evidence; no test/coverage pass")
+    c.add_argument("--measure-base-coverage", action="store_true",
+                   help="measure a missing baseline at the frozen base with matching dependencies")
     c.add_argument("--coverage-policy", choices=("required", "test-only"), default="required",
                    help="required coverage (default) or explicit NOT-verified test-only evidence")
     c.add_argument("--integrity-policy", choices=("strict", "advisory"), default="strict",

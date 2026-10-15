@@ -37,7 +37,7 @@ judge = ["anthropic>=0.40"]          # Layer 2 advisory judge, bring-your-own-ke
 dev = [
     "pytest>=8",
     "coverage==7.16.2",
-    "ruff==0.16.8",
+    "ruff==0.17.0",
 ]
 
 [project.scripts]
@@ -56,3 +56,7 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint]
+# Preserve the datetime checks removed from Ruff's defaults in 0.17.
+extend-select = ["DTZ001", "DTZ005", "DTZ006", "DTZ007", "DTZ011", "DTZ012", "DTZ901"]

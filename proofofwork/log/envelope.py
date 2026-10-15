@@ -30,6 +30,11 @@ def build_envelope(subject: str, verdict: Verdict) -> dict:
             "ruleset_version": "v1",
             "tests_passed": verdict.tests.passed,
             "coverage_policy": verdict.coverage_policy,
+            "coverage_baseline_source": verdict.coverage_baseline_source,
+            "coverage_baseline_measurements": {
+                family: value if valid_coverage(value) else None
+                for family, value in verdict.coverage_baseline_measurements.items()
+            },
             "integrity_policy": verdict.integrity_policy,
             "execution_mode": verdict.execution_mode,
             "coverage_status": verdict.coverage_status,
