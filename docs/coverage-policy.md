@@ -157,9 +157,64 @@ uv run --frozen --extra dev python -m pytest -q tests/test_runner.py tests/test_
 uv run --frozen --extra dev python -m pytest -q tests/test_coverage_policy.py -k actual_baseline_comparison
 ```
 
-Self-check's actual PR gate still needs a reviewed baseline in its immutable base (or
-separately reviewed frozen-base measurement implemented by the manager). Provisioning
-coverage may expose its previously missing baseline. That failure must not be fixed
-by trusting candidate bootstrap output. JS command/report regressions here use
-explicitly modeled subprocess outcomes, not installed real Jest/Vitest providers;
-provider versions/platforms and copied snapshot execution need separate validation.
+Self-check uses explicit frozen-base measurement when the immutable base has no
+reviewed baseline, under the dependency compatibility restrictions below. Candidate
+bootstrap output cannot authorize this comparison. Modeled report regressions remain
+in the fast suite; a separate CI job validates installed Jest/Vitest providers.
+
+## Explicit frozen-base measurement
+
+`--measure-base-coverage` (Action input `measure-base-coverage: true`) can measure
+an immutable comparison commit when no applicable trusted baseline exists. The
+engine runs that base before candidate detectors/tests, requires actual passing
+execution and complete valid coverage, then compares candidate coverage to that
+floor. Fresh mixed suites compare each language against its own base measurement,
+so low JS coverage cannot hide a Python regression (or vice versa). JSON and signed
+evidence record the per-language `coverage_baseline_measurements` map and
+`coverage_baseline_source: measured:<commit>`; no baseline
+file is created. Existing invalid, legacy or incomparable baselines still block;
+this option never replaces them. Default checks retain their existing behavior.
+
+The option cannot combine with staged checks, bootstrap, detector-only, test-only
+or configured exit-code suites. Its native execution is trusted-local, not hostile
+code isolation. The base uses the launcher's installed Python dependencies and
+copied installed JS dependencies only when recognized dependency inputs match the
+frozen tree byte-for-byte, including uncommitted changes and nested manifests.
+Python reuse supports static root `pyproject.toml` plus a matching `uv.lock`, or
+fixtures without declared dependency manifests. Supported metadata includes PEP621
+project/optional dependencies, PEP735 groups and registry build requirements. Group
+includes are validated recursively; local helpers and missing/cyclic/ambiguous
+includes fail closed. Lock sources must be HTTPS registries or the project's own
+root editable package; referenced lock artifacts must use HTTPS. Other editable,
+directory, path or local artifact entries require independent base provisioning.
+Requirements files, nested manifests, standalone `uv.toml`, custom manager settings,
+in-tree build backends and dynamic dependency declarations are unsupported in this
+optional mode. Changed inputs fail closed: provision the reviewed base independently
+and review a committed baseline before comparing that candidate.
+This check does not attest installed packages against their lockfile; launchers
+must provision their trusted environment from that lock with artifact verification.
+
+JS reuse additionally requires a matching root lockfile and rejects workspaces,
+nested packages and local-file dependency references. Copied internal relative `.bin` symlinks retain their targets;
+absolute links, external links and junctions are refused. Python imports prioritize
+the frozen tree and exclude candidate editable paths. Base tests that fail, do not
+execute, or cannot produce valid comparable coverage block the gate. Owned temporary
+worktrees are removed on success or failure without pruning unrelated worktrees.
+
+Dogfood opts into this explicit missing-baseline mode. It still fails closed on
+changed dependency inputs; a candidate baseline or test-only opt-out must never be
+used to turn that failure green. The separate `real-js-coverage` CI job installs
+Jest 30.5.2 and Vitest/coverage-v8 5.0.4 in disposable fixture repositories and tests
+actual coverage/report flags, empty/skipped/failing runs, frozen-base execution,
+and dependency mismatch rejection. Run it locally with Node 24/npm and:
+
+```bash
+uv run --frozen --extra dev python -m pytest -q integration/test_js_coverage.py
+```
+
+The allowed tool tables for Python reuse are pytest, Ruff, coverage, Black, isort,
+mypy, pyright, and static Hatch wheel-package selection. Other custom tool layouts
+require independent base provisioning; no pip directive parser or alternative
+manager inference is attempted. This bounded static-input check does not attest
+arbitrary build code or installed artifacts. Default stored-baseline checks are
+unchanged.
