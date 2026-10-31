@@ -1,6 +1,6 @@
 # Experimental Docker backend (#28 bounded slice)
 
-**Unverified containment; not issue #28 complete or a production sandbox.** This
+**Limited live Linux evidence; not issue #28 complete or a production sandbox.** This
 slice only supplies an explicit backend. The gate's `--sandbox docker` selection
 fails closed before Git or candidate execution because runner integration is unavailable.
 `eval run --untrusted` and `run_task(..., untrusted=True)` likewise reject before execution.
@@ -27,6 +27,9 @@ are deliberately unsupported. Preflight warnings/missing backend/image fail
 closed with `SandboxError`; there is no local fallback. Structured Docker info
 `Warnings` must be present and either `null` or an empty list; nonempty or malformed
 values reject before image inspection or container creation, even with empty stderr.
+`MemoryLimit`, `SwapLimit`, `CpuCfsPeriod`, `CpuCfsQuota` and `PidsLimit` must each
+be the JSON boolean `true`; false, missing or malformed support flags fail closed
+before image inspection. An empty warnings list alone is not resource evidence.
 
 Existing `Sandbox.run(cmd, cwd, env=None, timeout=600) -> RunOutput` stays compatible.
 `get_sandbox(kind="local", *, image=None)` retains its default behavior; image is
@@ -71,7 +74,7 @@ credentials/proxy settings, including automatic proxy ENV injection. Container
 bootstrap uses isolated image Python (`-I`) and execs the requested argv with only
 fixed PATH, HOME=/tmp and TMPDIR=/tmp. No host environment is forwarded.
 
-## Intended controls — live enforcement not established
+## Requested controls — bounded live checks, not a containment guarantee
 
 | Boundary/resource | Requested control |
 | --- | --- |
@@ -125,9 +128,10 @@ paths are requested from this backend worker.
    never reduce an existing trusted coverage baseline to informational output.
 5. Explicitly reject untrusted eval until agent, gate, verifier, mutation and any
    other candidate execution stage are isolated. **Eval is not safe now.**
-6. Keep this backend experimental pending independent review, an approved Linux
-   worker/image, live resource/network/secret/disposal tests and crash recovery
-   ownership. Decide whether shared-kernel containment is acceptable.
+6. Keep this backend experimental pending independent review, an approved production
+   worker/image, broader adversarial validation and crash recovery ownership. The
+   bounded live probes below do not establish every trust boundary. Decide whether
+   shared-kernel containment is acceptable.
 
 ## Evidence and documentation
 
@@ -138,9 +142,45 @@ repeated POSIX cancellation including disposal. These tests are **not evidence o
 container containment**. No hostile programs, host-secret probes or network
 exploitation are run on the developer host.
 
-Read-only readiness in this WSL session: native `docker` reports WSL integration
-unavailable; `docker.exe --context desktop-linux version --format '{{json .Server}}'`
-reports the Linux engine pipe missing. No container has been executed here.
+### Opt-in live Linux probes
+
+`integration/test_docker_sandbox.py` runs only with explicit image opt-in. It uses
+reviewed literal payloads **inside Docker**, a dummy host-file/environment canary,
+and only its own uniquely named containers. Without opt-in it skips; with opt-in,
+unavailable daemon/image or unsupported controls fail rather than skip. No pulls,
+builds, installs, daemon startup or settings changes occur. Provision/review the
+credential-free Python 3.12+ image separately, then run:
+
+```sh
+POW_DOCKER_TEST_IMAGE='reviewed/image@sha256:<64-lowercase-hex-digest>' \
+  uv run --frozen pytest -q integration/test_docker_sandbox.py
+```
+
+Native Linux evidence: **10 passed** with Docker 29.1.3, Linux
+7.0.0-42-generic, cgroup v2/systemd, built-in seccomp and the already provisioned
+`python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea`
+(Python 3.12 slim). The run checked:
+
+- dummy host file, host environment and Docker socket absent; snapshot unchanged;
+- UID/GID 65534, zero effective/bounding capabilities, seccomp filter and
+  no-new-privileges; root-filesystem writes denied;
+- TCP to documentation address `192.0.2.1` rejected with `ENETUNREACH` (not merely
+  an unreachable external server timing out);
+- cgroup CPU quota `100000/100000`, memory `536870912`, swap `0`, PIDs `64`, and
+  the configured FD/file-size rlimits visible inside the container;
+- PID exhaustion denied, 512 MiB memory exhaustion killed the workload (137),
+  `/work`, `/tmp` and `/dev/shm` quotas returned `ENOSPC`, and two CPU workers
+  increased the kernel throttling counter on the multi-CPU host;
+- nonzero exit, output excess, timeout, SIGINT and SIGTERM disposed of each owned
+  container; independent `container inspect` confirmed absence after each test.
+
+These are bounded probes on one host/image, not an escape assessment or production
+approval. They do not establish malicious-image safety, trusted test/coverage
+attestation, agent/verifier isolation, cross-platform support, external reaping,
+or recovery from SIGKILL, controller/daemon crashes and unknown create outcomes.
+The earlier WSL environment could not reach its daemon; that historical blocker
+is not the evidence for this native Linux run. No live CI workflow is enabled:
+operators must explicitly supply an approved preinstalled image.
 
 Official flag/config references checked:
 - [Docker create](https://docs.docker.com/reference/cli/docker/container/create/)

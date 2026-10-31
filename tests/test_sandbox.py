@@ -22,6 +22,11 @@ _SERVER_INFO = {
     "CgroupDriver": "systemd",
     "SecurityOptions": ["name=seccomp,profile=builtin"],
     "Warnings": [],
+    "MemoryLimit": True,
+    "SwapLimit": True,
+    "CpuCfsPeriod": True,
+    "CpuCfsQuota": True,
+    "PidsLimit": True,
 }
 
 
@@ -126,6 +131,23 @@ def test_structured_warnings_reject_before_image_or_create(model, fields):
     server.update(fields)
     responses["info"] = RunOutput(0, json.dumps(server), "")
     with pytest.raises(SandboxError, match="warnings"):
+        get_sandbox("docker", image=_IMAGE)
+    assert [args[0] for args, _ in calls] == ["info"]
+
+
+@pytest.mark.parametrize(
+    "capability", ["MemoryLimit", "SwapLimit", "CpuCfsPeriod", "CpuCfsQuota", "PidsLimit"]
+)
+@pytest.mark.parametrize("value", [False, None, "true"])
+def test_missing_or_unsupported_resource_limits_reject_before_image(model, capability, value):
+    calls, responses = model
+    server = dict(_SERVER_INFO)
+    if value is None:
+        server.pop(capability)
+    else:
+        server[capability] = value
+    responses["info"] = RunOutput(0, json.dumps(server), "")
+    with pytest.raises(SandboxError, match="limit support"):
         get_sandbox("docker", image=_IMAGE)
     assert [args[0] for args, _ in calls] == ["info"]
 
