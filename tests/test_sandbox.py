@@ -73,6 +73,15 @@ def test_default_local_behavior_is_unchanged(tmp_path, monkeypatch):
     assert result.code == 0 and result.stdout.strip() == "override"
 
 
+def test_live_probes_require_an_explicit_image(monkeypatch):
+    from integration import test_docker_sandbox as probes
+
+    monkeypatch.delenv("POW_DOCKER_TEST_IMAGE", raising=False)
+    monkeypatch.setattr(probes, "get_sandbox", lambda **_: pytest.fail("must reject first"))
+    with pytest.raises(pytest.UsageError, match="POW_DOCKER_TEST_IMAGE"):
+        next(probes.live.__wrapped__(monkeypatch))
+
+
 def test_factory_never_ignores_selection_or_image():
     with pytest.raises(ValueError):
         get_sandbox("unknown")

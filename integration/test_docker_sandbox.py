@@ -18,8 +18,10 @@ from proofofwork.core.sandbox import SandboxError, get_sandbox
 def live(monkeypatch):
     image = os.environ.get("POW_DOCKER_TEST_IMAGE")
     if not image:
-        pytest.skip("set POW_DOCKER_TEST_IMAGE to a reviewed preinstalled Linux image digest")
-    # Explicit opt-in must fail, not skip, when daemon/image/preflight is unavailable.
+        raise pytest.UsageError(
+            "set POW_DOCKER_TEST_IMAGE to a reviewed preinstalled Linux image digest"
+        )
+    # Explicit invocation must fail when image selection or preflight is unavailable.
     sandbox = get_sandbox("docker", image=image)
     client = sandbox._client
     names = []
@@ -52,6 +54,7 @@ def test_live_host_boundaries_and_kernel_controls(live, tmp_path, monkeypatch):
     program = f"""
 import errno, os, pathlib, resource, socket
 assert pathlib.Path('fixture.txt').read_text() == 'snapshot input'
+pathlib.Path('fixture.txt').write_text('container-only mutation')
 assert not pathlib.Path({str(canary)!r}).exists()
 assert 'POW_DUMMY_HOST_SECRET' not in os.environ
 assert 'HTTP_PROXY' not in os.environ
@@ -90,32 +93,29 @@ print('boundaries verified')
     assert output.code == 0 and output.stdout.strip() == "boundaries verified", output
     assert canary.read_text() == "reviewed dummy, not a real secret"
     assert sorted(path.name for path in snapshot.iterdir()) == ["fixture.txt"]
+    assert (snapshot / "fixture.txt").read_text() == "snapshot input"
 
 
 @pytest.mark.parametrize("resource", ["pids", "memory", "disk", "cpu"])
 def test_live_resource_exhaustion(live, tmp_path, resource):
     programs = {
         "pids": """
-import errno, os, signal, time
+import errno, subprocess
 children = []
 try:
     for _ in range(80):
         try:
-            pid = os.fork()
+            children.append(subprocess.Popen(['/bin/sleep', '30']))
         except OSError as exc:
             assert exc.errno == errno.EAGAIN and len(children) < 64
             print('pids denied', flush=True)
             break
-        if pid == 0:
-            time.sleep(30)
-            os._exit(0)
-        children.append(pid)
     else:
         raise AssertionError('PID limit not enforced')
 finally:
-    for pid in children:
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
+    for child in children:
+        child.kill()
+        child.wait()
 """,
         "memory": """
 # Intentionally exceed the 512 MiB cgroup; the controller must survive/dispose.
@@ -138,22 +138,23 @@ for directory, blocks in [('/work', 140), ('/tmp', 20), ('/dev/shm', 12)]:
 print('disk denied')
 """,
         "cpu": """
-import os, pathlib, time
+import os, pathlib, subprocess, sys
 stats = pathlib.Path('/sys/fs/cgroup/cpu.stat')
 def throttled():
     return int(dict(line.split() for line in stats.read_text().splitlines())['nr_throttled'])
 before = throttled()
+worker = 'import time; end = time.monotonic() + 2\\nwhile time.monotonic() < end: pass'
 children = []
-for _ in range(2):
-    pid = os.fork()
-    if pid == 0:
-        end = time.monotonic() + 2
-        while time.monotonic() < end:
-            pass
-        os._exit(0)
-    children.append(pid)
-for pid in children:
-    os.waitpid(pid, 0)
+try:
+    for _ in range(2):
+        children.append(subprocess.Popen([sys.executable, '-I', '-c', worker]))
+    for child in children:
+        assert child.wait() == 0
+finally:
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
 if len(os.sched_getaffinity(0)) > 1:
     assert throttled() > before
 print('cpu quota verified')

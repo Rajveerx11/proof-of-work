@@ -146,10 +146,11 @@ exploitation are run on the developer host.
 
 `integration/test_docker_sandbox.py` runs only with explicit image opt-in. It uses
 reviewed literal payloads **inside Docker**, a dummy host-file/environment canary,
-and only its own uniquely named containers. Without opt-in it skips; with opt-in,
-unavailable daemon/image or unsupported controls fail rather than skip. No pulls,
-builds, installs, daemon startup or settings changes occur. Provision/review the
-credential-free Python 3.12+ image separately, then run:
+and only its own uniquely named containers. It is outside default test collection;
+explicit invocation without an image raises `pytest.UsageError`. Unavailable
+daemon/image or unsupported controls also fail, never skip. No pulls, builds,
+installs, daemon startup or settings changes occur. Provision/review the
+credential-free Python 3.12+ image with `/bin/sleep` separately, then run:
 
 ```sh
 POW_DOCKER_TEST_IMAGE='reviewed/image@sha256:<64-lowercase-hex-digest>' \
