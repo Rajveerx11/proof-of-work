@@ -1,13 +1,116 @@
 """Frozen-base coverage preserves policy and rejects incompatible dependency reuse."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from proofofwork import engine
 from proofofwork.core import runner
+from proofofwork.interfaces.cli import main
 from proofofwork.log.envelope import build_envelope
 from proofofwork.types import TestResult
 from tests.test_production_policies import git, payload, put, repo, result, rules
+
+
+@pytest.mark.parametrize('change', ['.github/workflows/self-check.yml', 'README.md'])
+@pytest.mark.parametrize('staged', [False, True])
+def test_actual_non_source_diff_runs_trusted_baseline_suite(tmp_path, capsys, change, staged):
+    base = repo(tmp_path, payload(100))
+    (tmp_path / 'app.py').write_text('value = 1\n')
+    git(tmp_path, 'add', 'app.py')
+    put(tmp_path / change, '# workflow or documentation change\n')
+    git(tmp_path, 'add', change)
+    baseline = (tmp_path / '.proofofwork/baseline.json').read_bytes()
+    code = main(['check', '--root', str(tmp_path), '--base', base, '--json',
+                 '--staged' if staged else '--measure-base-coverage'])
+    verdict = json.loads(capsys.readouterr().out)
+    assert code == 0, verdict['reasons']
+    assert verdict['passed']
+    assert verdict['tests']['ran'] and verdict['tests']['passed']
+    assert verdict['tests']['framework'] == 'pytest'
+    assert verdict['coverage_status'] == 'verified'
+    assert verdict['coverage_baseline'] == 100
+    assert verdict['coverage_baseline_source'] == base
+    assert (tmp_path / '.proofofwork/baseline.json').read_bytes() == baseline
+
+
+@pytest.mark.parametrize('baseline_languages,changed,expected', [
+    (['python'], 'README.md', {'python'}),
+    (['js'], 'README.md', {'js'}),
+    (['js', 'python'], 'README.md', {'js', 'python'}),
+    (['python'], 'app.ts', {'python', 'ts'}),
+    (['js'], 'app.py', {'python', 'js'}),
+])
+def test_trusted_families_augment_not_replace_diff_selection(
+        monkeypatch, tmp_path, baseline_languages, changed, expected):
+    base = repo(tmp_path, payload(100, baseline_languages))
+    (tmp_path / 'app.py').write_text('value = 1\n')
+    git(tmp_path, 'add', 'app.py')
+    put(tmp_path / changed, 'value = 2\n')
+    git(tmp_path, 'add', changed)
+    # A candidate's different baseline must not select or remove required suites.
+    put(tmp_path / '.proofofwork/baseline.json', payload(0, ['js']))
+    calls = []
+
+    def run(sandbox, root, languages, **kwargs):
+        calls.append(languages.copy())
+        if 'python' in languages and languages.intersection({'js', 'ts'}):
+            return TestResult(ran=True, passed=True, coverage=100, js_coverage=100,
+                              framework='pytest+jest')
+        return TestResult(ran=True, passed=True, coverage=100,
+                          framework='pytest' if 'python' in languages else 'jest')
+
+    monkeypatch.setattr(runner, 'run_tests', run)
+    verdict = engine.check(str(tmp_path), base_ref=base, measure_base_coverage=True)
+    assert calls == [expected]
+    assert verdict.coverage_baseline == 100
+    assert verdict.passed is (changed == 'README.md'), verdict.reasons
+    if changed != 'README.md':
+        assert 'coverage-incomparable' in rules(verdict)
+
+
+@pytest.mark.parametrize('candidate', [result(coverage=80), result(coverage=None),
+                                     TestResult(), TestResult(ran=True, passed=False,
+                                                             framework='pytest', coverage=100)])
+def test_non_source_diff_cannot_bypass_coverage_or_execution(monkeypatch, tmp_path, candidate):
+    base = repo(tmp_path, payload(100))
+    (tmp_path / 'app.py').write_text('value = 1\n')
+    git(tmp_path, 'add', 'app.py')
+    put(tmp_path / 'README.md', '# docs only\n')
+    git(tmp_path, 'add', 'README.md')
+    monkeypatch.setattr(engine, '_measure_base', lambda *a: pytest.fail('stored floor is immutable'))
+    monkeypatch.setattr(runner, 'run_tests', lambda *a, **k: candidate)
+    verdict = engine.check(str(tmp_path), base_ref=base, measure_base_coverage=True)
+    assert not verdict.passed
+    assert verdict.coverage_status == 'not-verified'
+    assert verdict.coverage_baseline == 100
+    assert verdict.integrity_policy == 'strict'
+    if candidate.coverage == 80:
+        assert 'coverage-drop' in rules(verdict)
+    elif candidate.coverage is None and candidate.framework == 'pytest':
+        assert 'coverage-unavailable' in rules(verdict)
+
+
+@pytest.mark.parametrize('baseline', [
+    {'coverage': 100},
+    {'coverage': 100, 'metric': 'branch-v1', 'languages': ['python']},
+    payload(100, ['unknown']),
+    payload(100, ['python', 'js']),
+    'malformed',
+])
+def test_non_source_diff_cannot_migrate_invalid_baseline(monkeypatch, tmp_path, baseline):
+    base = repo(tmp_path, baseline)
+    (tmp_path / 'app.py').write_text('value = 1\n')
+    git(tmp_path, 'add', 'app.py')
+    put(tmp_path / 'README.md', '# docs only\n')
+    git(tmp_path, 'add', 'README.md')
+    before = (tmp_path / '.proofofwork/baseline.json').read_bytes()
+    monkeypatch.setattr(engine, '_measure_base', lambda *a: pytest.fail('must not replace floor'))
+    verdict = engine.check(str(tmp_path), base_ref=base, measure_base_coverage=True)
+    assert not verdict.passed
+    assert rules(verdict).intersection({'coverage-incomparable', 'coverage-baseline-invalid'})
+    assert (tmp_path / '.proofofwork/baseline.json').read_bytes() == before
 
 
 def test_actual_frozen_base_positive_negative_and_cleanup(tmp_path):
