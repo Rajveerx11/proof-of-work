@@ -146,6 +146,14 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     try:
         existing_baseline, coverage_baseline, baseline_metadata = _capture_coverage_baseline(
             root, diff, base_ref, staged)
+        # A trusted floor requires its suites even for workflow/docs-only diffs.
+        # Union, not replacement: newly changed language families remain required.
+        if coverage_policy == "required" and baseline_metadata is not None:
+            from .core.detector.coverage_delta import METRIC
+            families = baseline_metadata.get("languages")
+            if (baseline_metadata.get("metric") == METRIC
+                    and families in (["python"], ["js"], ["js", "python"])):
+                execution_languages.update(families)
     except Exception as exc:  # noqa: BLE001 - policy capture failures cannot permit an opt-out
         execution_allowed = False
         findings.append(Finding("coverage-baseline-error", Severity.BLOCK, str(exc)))
