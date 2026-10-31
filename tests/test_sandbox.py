@@ -82,6 +82,24 @@ def test_live_probes_require_an_explicit_image(monkeypatch):
         next(probes.live.__wrapped__(monkeypatch))
 
 
+@pytest.mark.parametrize("failure,limit", [("timeout", 1), ("exit", 10)])
+def test_live_failure_probe_allows_slow_startup(model, monkeypatch, tmp_path, failure, limit):
+    from integration import test_docker_sandbox as probes
+
+    sandbox = get_sandbox("docker", image=_IMAGE)
+    timeouts = []
+
+    def slow_start(cmd, cwd, *, timeout):
+        timeouts.append(timeout)
+        # Model two seconds of startup without sleeping or invoking Docker.
+        timed_out = timeout < 2
+        return RunOutput(124 if timed_out else 7, "", "", timed_out)
+
+    monkeypatch.setattr(sandbox, "run", slow_start)
+    probes.test_live_failure_disposal(sandbox, tmp_path, failure)
+    assert timeouts == [limit]
+
+
 def test_factory_never_ignores_selection_or_image():
     with pytest.raises(ValueError):
         get_sandbox("unknown")

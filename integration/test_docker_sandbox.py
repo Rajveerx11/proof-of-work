@@ -179,7 +179,10 @@ def test_live_failure_disposal(live, tmp_path, failure):
         with pytest.raises(SandboxError, match="output limit"):
             live.run(["python3", "-I", "-c", program], str(tmp_path), timeout=10)
     else:
-        output = live.run(["python3", "-I", "-c", program], str(tmp_path), timeout=1)
+        output = live.run(
+            ["python3", "-I", "-c", program], str(tmp_path),
+            timeout=1 if failure == "timeout" else 10,
+        )
         assert output.code == (124 if failure == "timeout" else 7), output
         assert output.timed_out == (failure == "timeout")
 
