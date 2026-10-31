@@ -7,8 +7,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
-  # keep Python deps (cryptography, etc.) current
-  - package-ecosystem: pip
+  # Update Python requirements and uv.lock together for locked CI installs.
+  - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
