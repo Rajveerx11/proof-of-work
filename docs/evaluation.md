@@ -3,28 +3,31 @@
 Proof of Work v0.2.0 evaluates trusted local coding agents against a versioned,
 deterministic corpus. It records facts from each run and can render a portable HTML
 comparison report. It does not provide a security sandbox or bundled agent rankings.
+The corpus/report contract originated in v0.2.0; current `main` also includes
+unreleased hardening. Follow [installation](installation.md) to select and verify
+the intended revision. Published report snapshots remain historical evidence.
 
 ## Quick start
 
 Install the project and choose one reviewed task:
 
 ```bash
-uv sync --extra dev
-uv run proof-of-work eval run tasks/python-fix-001.yaml \
+uv sync --locked --extra dev
+uv run --frozen proof-of-work eval run tasks/python-fix-001.yaml \
   --agent codex --model '<model-id>' --json
 ```
 
 Claude Code uses the same task:
 
 ```bash
-uv run proof-of-work eval run tasks/python-fix-001.yaml \
+uv run --frozen proof-of-work eval run tasks/python-fix-001.yaml \
   --agent claude --model '<model-id>' --json
 ```
 
 Any other trusted CLI uses the generic adapter and an explicit JSON argv list:
 
 ```bash
-uv run proof-of-work eval run tasks/python-fix-001.yaml \
+uv run --frozen proof-of-work eval run tasks/python-fix-001.yaml \
   --agent generic \
   --agent-label 'managed-agent' \
   --model 'managed-model' \
@@ -41,7 +44,7 @@ The safe default retains the agent CLI's permission controls. If a reviewed loca
 cannot run because the CLI sandbox is incompatible with the host, an operator may opt in:
 
 ```bash
-uv run proof-of-work eval run tasks/python-fix-001.yaml \
+uv run --frozen proof-of-work eval run tasks/python-fix-001.yaml \
   --agent codex --model '<model-id>' \
   --agent-label 'Codex CLI <version> (trusted-unrestricted)' \
   --trusted-unrestricted --json
@@ -116,16 +119,16 @@ never converted to zero or estimated from model pricing.
 Text and JSON history reports remain available:
 
 ```bash
-uv run proof-of-work eval report
-uv run proof-of-work eval report --json
-uv run proof-of-work eval report --format json --output results.json
-uv run proof-of-work eval report --format json --no-comparison --output corpus.json
+uv run --frozen proof-of-work eval report
+uv run --frozen proof-of-work eval report --json
+uv run --frozen proof-of-work eval report --format json --output results.json
+uv run --frozen proof-of-work eval report --format json --no-comparison --output corpus.json
 ```
 
 Generate static HTML:
 
 ```bash
-uv run proof-of-work eval report --format html --output report.html
+uv run --frozen proof-of-work eval report --format html --output report.html
 ```
 
 Use `--no-comparison` for a one-shot corpus whose rows are different tasks rather than
@@ -164,8 +167,13 @@ This is a trusted-local runner, not a sandbox. Reviewed fixtures and agent comma
 access the host, network, credentials available to their own CLI, or other processes.
 `--trusted-unrestricted` also disables the built-in agent CLI's own permission boundary.
 Process groups, Windows Job Objects, timeouts, bounded output, and disposable workspaces
-reduce accidents and races; they do not isolate hostile code. Use a container or microVM
-for untrusted fixtures or commands. See [SECURITY.md](../SECURITY.md).
+reduce accidents and races; they do not isolate hostile code. Current source rejects
+`eval run --untrusted` and `run_task(..., untrusted=True)` before execution. The
+experimental Docker API does not isolate the agent, gate and verifier lifecycle;
+`--trusted-unrestricted` is not an isolation selector. Untrusted use requires a
+separately provisioned/reviewed boundary and remains unsupported by this runner.
+See [isolation](isolation.md), [current status](production-hardening-status.md) and
+[SECURITY.md](../SECURITY.md).
 
 ## Troubleshooting
 

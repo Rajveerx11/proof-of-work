@@ -1,4 +1,9 @@
-# Proof of Work v0.2.0 — draft release notes
+# Proof of Work v0.2.0 — historical release-preparation draft
+
+> Preserved preparation text, not current publication status. The actual v0.2.0
+> GitHub release was published on 2026-08-04. Its later evidence snapshots are linked
+> from the [README](README.md); merged, unreleased hardening is documented in the
+> [changelog](CHANGELOG.md#unreleased) and [current status](docs/production-hardening-status.md).
 
 v0.2.0 turns the original single-task harness into a tested local agent-evaluation platform.
 

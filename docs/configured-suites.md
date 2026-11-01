@@ -4,7 +4,9 @@ The source-tree CLI/API can execute reviewed custom commands for multiple packag
 including configuration-only and unsupported-language changes. Every configured
 suite is required on every check. There is no changed-path mapping or autodiscovery.
 Repositories without suite configuration retain the existing pytest/Jest/Vitest runner.
-This is not a validated tagged release or full production rollout.
+This is merged but unreleased source functionality, not a validated tagged release
+or full production rollout. Install and verify the source revision using the
+[installation guide](installation.md); see the [current acceptance boundaries](production-hardening-status.md).
 
 ## Reviewed configuration
 
@@ -74,12 +76,15 @@ Configured exit-code commands cannot satisfy required coverage; the trusted oper
 explicitly select test-only evidence. Any applicable existing baseline still blocks.
 
 For CI, run the source revision under review with trusted installed dependencies and
-both explicit refs as above; the existing tagged Action, hooks, MCP and agent adapters
-do not gain a suite-base input in this slice. Do not treat an older tag as containing
+both explicit refs as above. The v0.2.0 Action does not contain configured suites.
+The source composite Action and installed pre-commit hook do not expose a suite-base
+input; call the source CLI/API
+explicitly for this mode. No MCP surface is shipped, and agent adapters do not gain
+a suite-base input in this slice. Do not treat an older tag as containing
 this feature.
 
-Staged commands run against an isolated copy of the index. The user index and working
-tree are not changed by snapshot creation. Installed ignored `node_modules` are **not**
+Staged commands run against a separate snapshot of the index, not a security sandbox.
+The user index and working tree are not changed by snapshot creation. Installed ignored `node_modules` are **not**
 copied in configured mode; prerequisites must exist in the index or commands must use
 trusted external tooling. Inherited worktree Python import paths are filtered by the
 existing staged Python bootstrap. Neither dependencies nor local execution are an

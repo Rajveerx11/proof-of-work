@@ -39,11 +39,20 @@ uv run --frozen ruff check .  # use the project-pinned lint tool
 
 Requires Python 3.11+, [uv](https://docs.astral.sh/uv/), and Node.js 24 for the
 JavaScript/TypeScript corpus and configured-suite integration tests. CI installs
-Node explicitly on both operating systems.
+Node explicitly on both operating systems. See [installation and checkout
+synchronization](docs/installation.md) for upgrading an existing clone without
+replacing local baselines, signing state or unrelated work.
 
 CI also builds the wheel and source distribution and tests the installed wheel in
 a fresh environment outside the checkout. Tags run this same validation before
 the existing PyPI publishing and artifact-attestation steps.
+
+Optional provider/container integration suites are separate from default pytest
+collection. Run [real JS provider tests](docs/coverage-policy.md#explicit-frozen-base-measurement)
+with the installed Node/npm toolchain. The [live Docker probes](docs/isolation.md#opt-in-live-linux-probes)
+require an explicitly selected, reviewed, already provisioned image; explicit
+invocation without it fails, rather than skipping or pulling an image. Mocked Docker
+tests are not containment evidence. No standalone typecheck is currently configured.
 
 ## The golden rule: no false positives without a test
 
@@ -77,14 +86,16 @@ Checks are small, pure functions. To add one:
 3. Emit `Finding(rule, severity, message, file=..., line=...)`. Choose severity carefully:
    - **`BLOCK`** — a hard cheat signal that fails the verdict on its own. Use only when
      you are confident it cannot fire on honest code.
-   - **`WARN`** — suspicious; surfaced but does not fail alone. The right default for a
-     heuristic.
+   - **`WARN`** — suspicious; may require review. The source-tree strict integrity
+     policy promotes its recognized high-risk WARN rules to BLOCK; other warnings
+     do not fail alone. See [integrity policy](docs/integrity-policy.md).
 4. Work from `DiffFile.added` / `.removed` line text — that's the information the check
    receives. Prefer the stdlib `ast` for deeper Python analysis.
 5. Add the positive **and** negative tests (see the golden rule above).
 
-Checks must **never raise** — the engine isolates exceptions, but a broken check should
-degrade gracefully rather than crash the gate.
+Checks should return findings rather than raise. The engine catches detector
+exceptions and emits a blocking `check-error` finding: analysis failure must not
+silently pass the gate.
 
 ## What stays out of the signed verdict
 
