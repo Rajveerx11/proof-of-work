@@ -20,11 +20,24 @@ and the repository's own test dependencies must be provisioned separately.
 
 ## Recommended: reviewed checkout and locked environment
 
-For a new checkout:
+The examples below reproduce the dated reviewed checkpoint
+`3612633823f777b8ad2cd605a15d477a2cdd7903`, not whichever commit a remote branch
+happens to point to later. For a newer installation, review the new revision and
+replace this SHA with its full immutable commit in every step and source requirement.
+
+For a new checkout, pin the source **before installing dependencies**:
 
 ```sh
 git clone https://github.com/Rajveerx11/proof-of-work.git
 cd proof-of-work
+git checkout --detach --no-overwrite-ignore 3612633823f777b8ad2cd605a15d477a2cdd7903
+git rev-parse HEAD
+```
+
+Compare the displayed HEAD with the exact reviewed SHA above. Stop on a mismatch.
+Only after that verification, install and run:
+
+```sh
 uv sync --locked --extra dev
 uv run --frozen proof-of-work --help
 uv run --frozen proof-of-work check --help
@@ -37,9 +50,17 @@ stashing to make synchronization succeed.
 
 ```sh
 git fetch origin
-git merge --ff-only --no-overwrite-ignore origin/main
-uv sync --locked --extra dev
+git merge --ff-only --no-overwrite-ignore 3612633823f777b8ad2cd605a15d477a2cdd7903
 git rev-parse HEAD
+```
+
+Verify that HEAD is exactly the selected full SHA **before** running `uv sync`.
+If this checkout is already ahead, merge may report "already up to date" without
+selecting the older checkpoint: stop on that SHA mismatch rather than installing
+an unreviewed revision or forcing a downgrade. After verification:
+
+```sh
+uv sync --locked --extra dev
 uv run --frozen proof-of-work check --help
 ```
 
@@ -58,8 +79,10 @@ never copy another machine's `.venv`, installed dependencies or `.proofofwork` s
 ## Optional: standalone source CLI
 
 A uv tool installation is isolated from the checkout. For this repository's
-maintainer/test tools, export the reviewed lock and install from its **full commit**.
-Replace both placeholder paths/ref below; choose a new constraints-file location.
+maintainer/test tools, export the lock from the **verified checkout above** and use
+that same full reviewed SHA in the source requirement below. Replace the placeholder
+path and ref; choose a new constraints-file location. Do not mix another revision's
+constraints with the selected source commit.
 
 ```sh
 uv export --frozen --extra dev --no-emit-project --no-hashes --output-file "PATH_TO_NEW_CONSTRAINTS.txt"
