@@ -142,9 +142,12 @@ that engine path or attempt full package-manager support.
 
 ## Tooling, CI and negative proof
 
-The dev extra pins `coverage==7.13.5`, upstream [coverage.py](https://github.com/coveragepy/coveragepy).
+At this source checkpoint the dev extra pins `coverage==7.16.2`, upstream
+[coverage.py](https://github.com/coveragepy/coveragepy); `pyproject.toml` and `uv.lock`
+are authoritative for your selected revision. The older baseline provenance's
+coverage 7.13.5 is its historical measurement environment, not the current tool pin.
 The lock records PyPI distribution hashes; unrelated locked versions are preserved.
-Install with `uv sync --frozen --extra dev`. The runner does not install coverage.
+Install with `uv sync --locked --extra dev`. The runner does not install coverage.
 
 Self-check runs a real Python fixture with a fixed reviewed 100% floor: a covered
 positive tree passes comparison, then added uncovered source still passes tests but
@@ -218,6 +221,13 @@ require independent base provisioning; no pip directive parser or alternative
 manager inference is attempted. This bounded static-input check does not attest
 arbitrary build code or installed artifacts. Default stored-baseline checks are
 unchanged.
+
+When a valid captured trusted floor declares supported language families, those
+families remain required even for docs/workflow-only changes. They augment, never
+replace, diff-selected families. Missing/legacy/wrong-metric baselines are not
+repaired or relabeled by suite selection. Adding a different language still keeps
+identity mismatch checks and both required suites; a missing suite cannot silently
+turn a comparison green. This is not changed-path mapping for configured suites.
 
 Changes to the root `pyproject.toml` or `uv.lock` require the Python suite even
 when no Python source file changed. Removal and renaming retain that requirement,

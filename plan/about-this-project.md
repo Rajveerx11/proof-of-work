@@ -1,5 +1,13 @@
 # Proof-of-Work — what this project is
 
+> **Historical planning document, not the current implementation contract.**
+> The proposed milestones below are preserved as design history. The detector,
+> learning CLI, hooks, Action and evaluation corpus now exist; Python 3.11+,
+> regex/stdlib parsing and trusted-local execution describe the implemented core.
+> Docker remains an experimental API, not enabled untrusted gate/eval execution.
+> See the [current README](../README.md), [hardening status](../docs/production-hardening-status.md)
+> and [installation guide](../docs/installation.md) for shipped versus unreleased behavior.
+
 ## In one line
 An open-source tool that **catches AI coding agents cheating on their work** — and proves,
 with a signed record, that the work was actually checked.
@@ -57,6 +65,6 @@ on ~20 real agent PRs, and publish the catch count — to prove people care befo
 - `html-files/proof-of-work-deep-dive.html` — visual deep dive of how it works
 - `html-files/tech-stack-and-requirements.html` — visual spec + the roast verdict
 
-## Status
+## Status at the original planning checkpoint
 Planning complete · finalized stack + requirements · reshaped by a 5-agent `/roast` review ·
 next up: scaffold the 48-hour deterministic detector.
