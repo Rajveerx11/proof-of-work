@@ -22,6 +22,11 @@ _SERVER_INFO = {
     "CgroupDriver": "systemd",
     "SecurityOptions": ["name=seccomp,profile=builtin"],
     "Warnings": [],
+    "MemoryLimit": True,
+    "SwapLimit": True,
+    "CpuCfsPeriod": True,
+    "CpuCfsQuota": True,
+    "PidsLimit": True,
 }
 
 
@@ -66,6 +71,33 @@ def test_default_local_behavior_is_unchanged(tmp_path, monkeypatch):
         {"POW_LOCAL_FIXTURE": "override"},
     )
     assert result.code == 0 and result.stdout.strip() == "override"
+
+
+def test_live_probes_require_an_explicit_image(monkeypatch):
+    from integration import test_docker_sandbox as probes
+
+    monkeypatch.delenv("POW_DOCKER_TEST_IMAGE", raising=False)
+    monkeypatch.setattr(probes, "get_sandbox", lambda **_: pytest.fail("must reject first"))
+    with pytest.raises(pytest.UsageError, match="POW_DOCKER_TEST_IMAGE"):
+        next(probes.live.__wrapped__(monkeypatch))
+
+
+@pytest.mark.parametrize("failure,limit", [("timeout", 1), ("exit", 10)])
+def test_live_failure_probe_allows_slow_startup(model, monkeypatch, tmp_path, failure, limit):
+    from integration import test_docker_sandbox as probes
+
+    sandbox = get_sandbox("docker", image=_IMAGE)
+    timeouts = []
+
+    def slow_start(cmd, cwd, *, timeout):
+        timeouts.append(timeout)
+        # Model two seconds of startup without sleeping or invoking Docker.
+        timed_out = timeout < 2
+        return RunOutput(124 if timed_out else 7, "", "", timed_out)
+
+    monkeypatch.setattr(sandbox, "run", slow_start)
+    probes.test_live_failure_disposal(sandbox, tmp_path, failure)
+    assert timeouts == [limit]
 
 
 def test_factory_never_ignores_selection_or_image():
@@ -126,6 +158,23 @@ def test_structured_warnings_reject_before_image_or_create(model, fields):
     server.update(fields)
     responses["info"] = RunOutput(0, json.dumps(server), "")
     with pytest.raises(SandboxError, match="warnings"):
+        get_sandbox("docker", image=_IMAGE)
+    assert [args[0] for args, _ in calls] == ["info"]
+
+
+@pytest.mark.parametrize(
+    "capability", ["MemoryLimit", "SwapLimit", "CpuCfsPeriod", "CpuCfsQuota", "PidsLimit"]
+)
+@pytest.mark.parametrize("value", [False, None, "true"])
+def test_missing_or_unsupported_resource_limits_reject_before_image(model, capability, value):
+    calls, responses = model
+    server = dict(_SERVER_INFO)
+    if value is None:
+        server.pop(capability)
+    else:
+        server[capability] = value
+    responses["info"] = RunOutput(0, json.dumps(server), "")
+    with pytest.raises(SandboxError, match="limit support"):
         get_sandbox("docker", image=_IMAGE)
     assert [args[0] for args, _ in calls] == ["info"]
 

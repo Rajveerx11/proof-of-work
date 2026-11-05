@@ -22,8 +22,10 @@ the light green:
 - weaken assertions (`assert True`) or mock away the code under test
 - ship changes that quietly drop coverage
 
-An agent cannot grade its own homework. Proof-of-Work is the grader that runs after it, as a
-git hook or CI step the agent cannot skip, and re-checks the work against hard facts.
+An agent cannot grade its own homework. Proof-of-Work runs after it through a
+human-wired git hook or CI step and re-checks the work against hard facts. Protect the
+launcher, policy and signing authority outside the agent's control; a local hook alone
+is not an unskippable security boundary.
 
 ```console
 $ proof-of-work check --base origin/main
@@ -40,6 +42,11 @@ reproducible.
 
 ## Install
 
+The latest published release is **v0.2.0**. Merged hardening on `main` is still
+**unreleased**; installing from PyPI or using the v0.2.0 Action does not include it.
+See [installation and local synchronization](docs/installation.md) for reviewed
+source installs, upgrades, Windows commands and commit verification.
+
 ```bash
 # run once, no install (requires uv)
 uvx --from proof-of-work-agent proof-of-work check --base origin/main
@@ -49,7 +56,7 @@ pip install proof-of-work-agent    # PyPI name; CLI command stays proof-of-work
 proof-of-work check --staged       # gate what you are about to commit
 ```
 
-Wire it as a gate the agent cannot skip:
+Install the local convenience hook (protect a separate trusted CI gate for enforcement):
 
 ```bash
 proof-of-work install-hook         # writes .git/hooks/pre-commit
@@ -69,7 +76,8 @@ git diff ──▶ deterministic checks ──▶ re-run real tests ──▶ co
                                                         LLM judge ────────────────┘ (advisory metadata only)
 ```
 
-1. **Re-runs the real tests** in isolation and reads the true result, never the agent's word.
+1. **Re-runs the real tests** in trusted-local subprocesses and reads the true result,
+   never the agent's word. This is not hostile-code isolation.
 2. **Scans the git diff** for tampering: deleted or weakened tests, fake passes, coverage kills.
 3. **Mutation-tests** the change (optional) to catch present-but-gutted tests.
 4. Returns a plain **pass/fail with reasons** the agent or CI can branch on.
@@ -103,8 +111,11 @@ Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fai
       mutation: "false"   # optional: also run mutation testing (slower)
   ```
 
-Flags: `--staged`, `--base <ref>`, `--suite-base <reviewed-ref>`, `--no-tests`,
-`--mutation`, `--update-baseline`, `--json`, `--judge`, `--db <path>`.
+Source-tree flags include `--staged`, `--base <ref>`, `--suite-base <reviewed-ref>`,
+`--measure-base-coverage`, `--coverage-policy required|test-only`,
+`--integrity-policy strict|advisory`, `--no-tests`, `--mutation`,
+`--update-baseline`, `--json`, `--judge` and `--db <path>`. Run `check --help` on
+**your installed revision**; not all source flags exist in v0.2.0.
 
 **Unreleased source-tree hardening:** checks now default to `--coverage-policy required`
 and `--integrity-policy strict`. Required coverage blocks missing/stale/invalid reports
@@ -120,8 +131,11 @@ in JSON and signed evidence. Advisory is not human approval. Protect policy sele
 in trusted CI; an agent-controlled launcher cannot authorize its own opt-out.
 `--no-tests` produces detector-only evidence and cannot be combined with mutation.
 Local execution remains trusted-only. The [experimental Docker backend](docs/isolation.md)
-is not integrated or live-validated: `check --sandbox docker` fails closed without
-local fallback, and `eval run --untrusted` is rejected before execution.
+has bounded live Linux evidence, but is **not integrated into gate/eval execution**:
+`check --sandbox docker` fails closed without local fallback, and
+`eval run --untrusted` is rejected before execution. Resource preflight and live
+probes do not establish production readiness; see the
+[current hardening status](docs/production-hardening-status.md).
 
 The source-tree CLI/API also supports [reviewed configured suites](docs/configured-suites.md)
 for custom commands and multiple package roots. This bounded mode requires an explicit
@@ -150,13 +164,18 @@ baseline is trusted only after the reviewed commit). Ordinary `--base <ref>` che
 working-tree or newly committed baseline. If the base has no baseline, a candidate's
 first proposed baseline is **not** silently trusted: measured coverage blocks with
 `coverage-baseline-missing` until a baseline is explicitly bootstrapped locally and
-reviewed into the base branch. Ordinary local checks without `--base` still use the
+reviewed into the base branch, or the operator explicitly requests
+`--measure-base-coverage` with compatible trusted dependencies. That option measures
+the immutable base first and writes no baseline; it never replaces an existing floor.
+Ordinary local checks without `--base` still use the
 local baseline. Bootstrap fails if any baseline already exists, if coverage is invalid
 or unavailable, or if another gate check fails; it never updates a baseline to accept
 a drop. A fresh clone using the hook must bootstrap its own local baseline or receive
 the reviewed committed baseline. Staged tests run in a temporary Git worktree over the
 index content, with ignored `node_modules` copied from the working tree only when
-JS/TS files changed. Mixed Python and JS/TS changes require both suites. Python
+a JS/TS suite is required. A valid trusted baseline's language families remain
+required even for documentation/workflow-only changes; changed language families
+are added, never replaced. Mixed Python and JS/TS changes require both suites. Python
 coverage and JS/TS coverage are kept separate, not averaged: when both are measured,
 each is conservatively compared with the existing scalar baseline. A material drop in
 either blocks. This scalar baseline does not capture independent per-language history,
@@ -359,14 +378,17 @@ A strong filter, not an oracle:
 
 ## Roadmap
 
-- **v1 (shipped):** deterministic detector, CLI + git hook + GitHub Action, local signed log,
-  advisory judge, Python and JS/TS.
-- **v2 (in progress):** self-improving rule loop. `proof-of-work learn` mines a frozen,
-  human-labeled cheat corpus, drafts a rule for anything the built-ins miss, and promotes it
-  only if it catches the cheat with zero false positives on the clean corpus (add-only;
-  rollback is `git revert`).
-- **v2+ (deferred):** MCP tool, hosted microVM sandbox, keyless signing to a Rekor
-  transparency log, opt-in federated cheat corpus.
+- **Available core:** deterministic detector, CLI + git hook + GitHub Action, local signed
+  log, advisory judge, Python/JS/TS evaluation corpus and reports.
+- **Available local learning CLI:** `proof-of-work learn` mines a frozen, human-labeled
+  cheat corpus and promotes a rule only when it catches a missed cheat with zero false
+  positives on the clean corpus (add-only; rollback is `git revert`). This is not online
+  learning from arbitrary production traffic or a measured catch-rate on unknown cheats.
+- **Merged, unreleased hardening:** required coverage, strict integrity, reviewed
+  configured suites and experimental Docker API; acceptance gaps remain in the
+  [status report](docs/production-hardening-status.md).
+- **Deferred:** MCP tool, hosted microVM service, keyless/publicly anchored signing and
+  opt-in federated cheat corpus.
 
 See [`plan/`](plan/) for the full spec and design history.
 
@@ -375,9 +397,9 @@ See [`plan/`](plan/) for the full spec and design history.
 ```bash
 git clone https://github.com/Rajveerx11/proof-of-work
 cd proof-of-work
-uv sync --extra dev      # .venv + project + pytest
-uv run pytest -q         # the suite (CI: Linux + Windows x Python 3.11–3.14)
-uv run ruff check .      # lint (locked dev dependency)
+uv sync --locked --extra dev  # reviewed lockfile + .venv + project + test tools
+uv run --frozen pytest -q     # CI: Linux + Windows x Python 3.11–3.14
+uv run --frozen ruff check .  # pinned lint tooling
 ```
 
 One package, `proofofwork/`:
@@ -390,12 +412,27 @@ proofofwork/
 │   ├── gitdiff.py     # git plumbing to parsed Diff
 │   ├── detector/      # the cheat checks (ALL_CHECKS registry)
 │   ├── runner.py      # re-run the real suite through the sandbox
-│   └── sandbox/       # isolation seam (local now; Docker/microVM later)
+│   └── sandbox/       # trusted-local default; experimental Docker API only
 ├── eval/              # coding-agent harness, gate, SQLite history + trends
 ├── log/               # hash-chained, Ed25519-signed tamper-evident log
 ├── judge/             # advisory LLM judge (never signs)
 └── interfaces/        # cli.py, precommit, action.yml
 ```
+
+## Documentation
+
+- [Install, update and sync local checkouts](docs/installation.md)
+- [Current hardening status and remaining blockers](docs/production-hardening-status.md)
+- [Coverage, trusted baselines and migration](docs/coverage-policy.md)
+- [Integrity policy and heuristic limits](docs/integrity-policy.md)
+- [Reviewed multi-package suites](docs/configured-suites.md)
+- [Experimental Docker API and live-evidence limits](docs/isolation.md)
+- [Agent evaluation and reports](docs/evaluation.md)
+- [Security model](SECURITY.md) and [contributor workflow](CONTRIBUTING.md)
+
+The files under `plan/` are historical proposals, not the implemented contract.
+Versioned `reports/` and release artifacts preserve their original measurements;
+they are not current production-readiness claims.
 
 ## Contributing
 
@@ -407,6 +444,3 @@ ships with a test proving it does not. This repo gates its own PRs with Proof-of
 
 [Apache License 2.0](LICENSE). The deterministic detector, CLI, hook, and Action are open and
 free.
-
-When a reviewed base has no coverage baseline, `proof-of-work check --base REF --measure-base-coverage` explicitly measures that immutable base with compatible
-installed dependencies; see [coverage policy](docs/coverage-policy.md#explicit-frozen-base-measurement).

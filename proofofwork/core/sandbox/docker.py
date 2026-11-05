@@ -1,4 +1,4 @@
-"""Experimental Linux Docker backend; containment has not been live-validated."""
+"""Experimental Linux Docker backend; not a production untrusted-execution path."""
 
 from __future__ import annotations
 
@@ -249,6 +249,13 @@ class DockerSandbox:
                 or "name=seccomp,profile=builtin" not in server.get("SecurityOptions", [])
             ):
                 raise SandboxError("Docker requires Linux cgroup v2 and built-in seccomp")
+            if any(
+                server.get(capability) is not True
+                for capability in (
+                    "MemoryLimit", "SwapLimit", "CpuCfsPeriod", "CpuCfsQuota", "PidsLimit"
+                )
+            ):
+                raise SandboxError("Docker requires CPU, memory, swap and PID limit support")
             result = self._client("image", "inspect", image)
             if result.code or result.stderr:
                 raise SandboxError("preinstalled pinned Docker image unavailable")
