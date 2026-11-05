@@ -67,8 +67,9 @@ silently disable the gate. Validate Action/CLI mode input at the trusted boundar
   with `+++` or `---` are not confused with file headers inside a hunk.
 - Python defaults require a literal `.py` suffix and platform-aware `test_*.py` /
   `*_test.py` matching. Known default `norecursedirs` exclusions are modeled, not
-  arbitrary configured excludes. Windows normcase is tested in simulation; native
-  Windows filename restrictions/collection are not verified locally.
+  arbitrary configured excludes. Windows normcase has modeled regressions and the hosted suite runs on Windows
+  across Python 3.11–3.14. That matrix is not exhaustive evidence for all native
+  filename restrictions, custom collection or consumer toolchains.
 - JS/TS `.test`/`.spec` names and Jest's `__tests__` convention are modeled outside
   `node_modules`. `__tests__` is not a universal Vitest default. Compatible
   Python/JS moves preserve their family; cross-family renames require review,
@@ -116,3 +117,5 @@ fixture to retain promotion/idempotence coverage without weakening detection.
 `tests/test_integrity_integration.py` exercises real Git and pytest, strict/advisory
 verdicts, preserved and discovery-losing renames, and durably signed policy labels.
 These regressions do not establish full-context assertion semantics or hostile-code safety.
+For the current source/release distinction and validation evidence, see
+[installation](installation.md) and [hardening status](production-hardening-status.md).

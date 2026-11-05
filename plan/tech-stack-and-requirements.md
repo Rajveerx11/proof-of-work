@@ -1,5 +1,14 @@
 # Proof-of-Work — Tech Stack & Technical Requirements
 
+> **Historical July 2026 proposal, not the implemented stack or release contract.**
+> Preserved decisions below include superseded plans: current code supports Python
+> 3.11+, uses regex/stdlib parsing (no tree-sitter/Semgrep/MCP dependency), signs a
+> local Ed25519 log head and defaults to trusted-local execution. Docker has bounded
+> live Linux evidence but is not wired into gate/eval execution. Package versions,
+> proposed repository layout and hosted features below are not installation guidance.
+> Use the [README](../README.md), [current status](../docs/production-hardening-status.md)
+> and [installation guide](../docs/installation.md).
+
 > Open-source tool that catches AI coding agents cheating on their work (deleted tests,
 > `sys.exit(0)` fake passes, weakened asserts, coverage drops, mocked-away logic).
 > This is the finalized engineering spec — decisions, not options — with the `/roast`

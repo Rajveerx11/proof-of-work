@@ -2,6 +2,46 @@
 
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+These changes are merged source functionality, not a new tagged/PyPI release.
+The source package version remains 0.2.0; verify the installed Git commit.
+
+### Added
+
+- Explicit reviewed configured suites for multiple packages, with required command
+  statuses and exit-code evidence; configured coverage remains unsupported.
+- Strict required-coverage evidence, immutable trusted-baseline capture and explicit
+  frozen-base measurement with dependency-compatibility checks.
+- Reviewed coverage-floor provenance, real Jest/Vitest coverage fixtures and locked
+  Linux/Windows Python 3.11–3.14 CI, distribution builds and installed-wheel smoke tests.
+- Experimental digest-pinned Linux Docker API with bounded snapshots/capture and
+  opt-in live probes for host boundaries, resources, failure and cancellation cleanup.
+
+### Changed
+
+- Source defaults to required coverage and strict high-risk integrity policy, with
+  effective policies/status recorded in JSON and signed evidence. These defaults
+  must be controlled by the trusted operator, not candidate inputs.
+- Diff analysis includes rename/copy/discovery and executable skip-marker context;
+  syntactic assertions and other heuristics retain documented limitations.
+
+### Fixed
+
+- Trusted coverage-baseline families remain required for docs/workflow-only changes
+  and augment, rather than replace, changed-language requirements.
+- Docker preflight rejects missing, false or malformed resource-capability support
+  before image inspection/container creation.
+- Live nonzero-exit probes allow container startup time without weakening the
+  deliberately short timeout probe; modeled slow-startup regressions cover both.
+
+### Security
+
+- Docker gate routing and untrusted eval still fail closed: the experimental API and
+  bounded live Linux evidence do not establish production untrusted execution.
+- No production-readiness certification, externally anchored attestation or new
+  release is implied. See [current status](docs/production-hardening-status.md).
+
 ## [0.2.0] - 2026-08-03
 
 ### Added

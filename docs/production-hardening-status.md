@@ -1,92 +1,91 @@
-# Supervised production hardening: #26, #28, #29
+# Production hardening status
 
-This is **unreleased hardening work**, not a production-readiness certification or a release.
-At the verification checkpoint, no commits, pushes, tags, PR publication, or issue closure
-had been performed. Commit and push were subsequently requested by the operator; this
-report preserves the implementation and verification checkpoint, not publication state.
+**Checkpoint: 2026-11-01, reviewed source `3612633`.** This is merged,
+**unreleased** hardening, not a production-readiness certification. The published
+release remains v0.2.0; installing that tag or PyPI package does not include all
+source-tree features described here. Package metadata on `main` also remains
+0.2.0. Use the [installation guide](installation.md) to verify the source commit.
 
-## Management and boundaries
+## Merged and verified
 
-Three implementation agents followed the `security` and `code-structure` skills.
-Work was divided into coverage/runner, isolation backend, and Git/test-integrity ownership.
-The supervisor integrated shared engine, types, signed evidence, CLI and Action changes.
-Independent read-only review found four defects, all repaired with regressions; the
-follow-up review found no critical/high issue in its reviewed scope.
+- Required coverage and strict integrity are the source defaults. Baseline
+  existence/value/identity are captured before candidate execution. Missing,
+  invalid, stale or incomparable coverage blocks; advisory/test-only modes are
+  explicit labeled evidence, not human authorization or a baseline bypass.
+- The reviewed committed floor was adopted independently from an already reviewed
+  tree. Its [provenance](coverage-baseline-provenance.json) and artifacts remain
+  unchanged. Candidate coverage cannot authorize replacing it.
+- [PR #49](https://github.com/Rajveerx11/proof-of-work/pull/49) fixed docs/workflow-only
+  changes selecting no suites: trusted baseline families augment changed-language
+  requirements before execution, without changing the floor or policies.
+- Reviewed configured suites run all required commands across packages. This is
+  **exit-code test-execution evidence only**, not configured coverage or whole-candidate
+  attestation. Explicit suite base and test-only policy are required; an applicable
+  trusted coverage baseline still blocks that mode.
+- [PR #50](https://github.com/Rajveerx11/proof-of-work/pull/50) hardened the experimental
+  Docker API's resource-capability preflight and added bounded live Linux probes.
+  Missing/false/malformed resource support fails before image inspection/create.
+  Its CodeRabbit startup-timeout finding was reproduced, repaired and verified at
+  the exact final commit before merge.
 
-The user's initial dirty worktree was snapshotted at
-`/tmp/pow-management-baseline-pvzbmvvl` before edits. Existing unrelated files were
-left untouched. New changes are additional to that user state, not equivalent to the
-whole diff against HEAD. Existing CRLF format is retained.
+## Verification evidence at this checkpoint
 
-## Status and acceptance boundaries
+| Scope | Observed result | Boundary |
+| --- | --- | --- |
+| Full strict local gate | 985 passed, 7 platform-specific skips; required coverage and strict integrity passed | Python 3.13.15, Node 24.21.0; trusted-local execution |
+| Final sandbox unit regressions | 95 passed | Modeled policy/lifecycle plus safe local fixtures, not containment proof |
+| Live Docker probes | 10 passed on native Linux; the 3 affected failure/disposal cases passed again after the startup-budget repair | One existing pinned Python 3.12 image, Docker 29.1.3; see [isolation evidence](isolation.md#opt-in-live-linux-probes) |
+| Hosted validation | [Main CI at the reviewed squash commit passed](https://github.com/Rajveerx11/proof-of-work/actions/runs/41231169761), including Linux/Windows Python 3.11–3.14, real JS coverage, lint and distribution validation | Does not prove arbitrary consumer Action workflows or untrusted execution |
+| Final source checks | Locked dependency consistency, pinned Ruff and whitespace checks passed | No separate typecheck is configured |
 
-| Issue | Implemented | Still required |
-|---|---|---|
-| #26 | Required coverage default; fresh private Python/JS reports and positive test-execution witnesses; finite/consistent report validation; frozen explicit-base authority; baseline capture before execution; metric/language identity checks; guarded local bootstrap; signed policy/status; explicit test-only cannot bypass a trusted baseline; pinned dev coverage tooling and positive/negative CI fixture | Reviewed baseline adoption/migration in the actual base branch, hosted self-check, real Jest/Vitest provider and staged dependency-layout validation, native Windows validation |
-| #29 | Old/new rename/copy classification, unchanged-body discovery-loss detection, unusual Git paths, strict high-risk policy default, explicit advisory labels in JSON/signed evidence, real Git/pytest integration and learning regressions | Full-source assertion/lexical semantics and collection-aware verification; heuristic findings require review rather than accusations; advisory is not authorization or a human override |
-| #28 | Experimental digest-pinned Linux Docker backend, no host binds/automatic pulls/env forwarding, bounded metadata-free snapshot, requested privilege/network/resource controls, fail-closed readiness, bounded client capture/disposal, modeled negative tests | Gate/runner integration, trusted image/toolchain and artifact transport, all-stage eval isolation, live containment/resource/cleanup tests, external crash recovery, supported-platform decision |
+The full-gate coverage measurement was 92.157% against the unchanged trusted
+92.568% floor, within the existing 2-point threshold. The measured/tested source
+tree matched the merged squash commit exactly. These are checkpoint observations,
+not promises about later revisions or universal platform coverage.
 
-**Do not close #28 as complete.** No live container ran: WSL Docker integration/daemon
-was unavailable. The gate rejects `--sandbox docker` before Git or host execution,
-without a local fallback. CLI `eval run --untrusted` and library
-`run_task(..., untrusted=True)` reject before execution. Local mode remains trusted-only.
-Do not use it for hostile repos or agents.
+## Remaining production boundaries
 
-Policy switches must belong to protected trusted CI, not candidate configuration.
-The `v0.2.0` tag and published snapshots do not include these changes.
+| Workstream | Available now | Still required |
+| --- | --- | --- |
+| [#26 coverage](https://github.com/Rajveerx11/proof-of-work/issues/26) | Required policy, execution witnesses, frozen-base authority, reviewed floor, real provider and hosted matrix regressions | Consumer-specific adoption and remaining acceptance evidence; no issue closure implied |
+| [#27 configured suites](https://github.com/Rajveerx11/proof-of-work/issues/27) | Reviewed multi-package argv/cwd/prerequisites, staged snapshots, all required suites and exit statuses | Selective mapping, full configured coverage and toolchain/rollout validation |
+| [#28 isolation](https://github.com/Rajveerx11/proof-of-work/issues/28) | Experimental digest-pinned Linux Docker API and bounded live resource/network/cleanup evidence | Gate/runner integration, trusted image/toolchain and artifact transport, all eval stages, external crash recovery and supported-platform decision |
+| [#29 integrity](https://github.com/Rajveerx11/proof-of-work/issues/29) | Strict high-risk policy, rename/copy/discovery analysis and executable skip-marker context | Full assertion/lexical semantics and collection-aware verification; findings remain heuristics |
+| [#30 baselines](https://github.com/Rajveerx11/proof-of-work/issues/30) | Stored scalar floor with identity; explicit frozen-base measurement records per-language values | Trusted per-suite baseline histories and configured-suite coverage |
+| [#31 JS tooling](https://github.com/Rajveerx11/proof-of-work/issues/31) | Installed tooling, matching dependency-input checks and real Jest/Vitest regression fixtures | Broader deterministic/offline-safe package-manager and workspace support |
+| [#32 budgets](https://github.com/Rajveerx11/proof-of-work/issues/32) | Bounded experimental Docker workload/capture controls | End-to-end diff, dependency-copy, local output/runtime/resource budgets and stress evidence |
+| [#33 consumer Action](https://github.com/Rajveerx11/proof-of-work/issues/33) | Composite argument/trust-boundary tests and self-dogfood | Realistic consumer-repository Action workflows and supported OS evidence |
+| [#34 attestation](https://github.com/Rajveerx11/proof-of-work/issues/34) | Local hash chain and signed head | Externally verifiable cross-machine attestation |
+| [#35 rollout](https://github.com/Rajveerx11/proof-of-work/issues/35) | Reviewed merged slices and CI evidence | Supported rollout/release acceptance and separately authorized publication |
 
-## Review repairs
+**Do not close #28 as complete.** `check --sandbox docker` still rejects before Git
+or candidate execution, without local fallback. CLI `eval run --untrusted` and
+library `run_task(..., untrusted=True)` also reject before execution. Native mode
+remains trusted-only; do not run hostile repositories or agents on the host.
+The live probes are not malicious-image safety, escape assessment, full-stage
+attestation or recovery from controller/daemon crashes. Shared-kernel containment
+and an approved production worker/image remain operator decisions.
 
-1. Explicit non-HEAD base comparisons cannot bootstrap a floor from candidate coverage.
-2. Detector-only checks cannot execute mutation; execution-policy suppression covers
-   mutation as well as normal suites.
-3. Docker snapshot traversal errors raise instead of silently omitting source subtrees.
-4. Docker daemon `Warnings` must be present and empty/null; missing, malformed or
-   nonempty warnings block preflight.
+Maintenance changes in PRs [#45](https://github.com/Rajveerx11/proof-of-work/pull/45),
+[#47](https://github.com/Rajveerx11/proof-of-work/pull/47),
+[#48](https://github.com/Rajveerx11/proof-of-work/pull/48) and
+[#51](https://github.com/Rajveerx11/proof-of-work/pull/51) were not part of this
+source checkpoint. Check their current status before claiming their dependency
+or updater changes shipped. Do not bypass required review to clear a quota/seat blocker.
 
-## Verification
+## Historical evidence and follow-up
 
-Commands ran in `/mnt/c/proof-of-work` using the frozen dev environment.
+The [earlier integration report](https://github.com/Rajveerx11/proof-of-work/blob/3612633823f777b8ad2cd605a15d477a2cdd7903/docs/production-hardening-status.md)
+records the older 604-test WSL checkpoint and its unavailable Docker daemon.
+That historical environment is not the evidence for the later native Linux run.
+Versioned `reports/`, coverage provenance and v0.2.0 release artifacts are preserved,
+not rewritten into current scores or readiness claims.
 
-| Exact command | Result |
-|---|---|
-| `uv run --frozen --extra dev python -m pytest -q` | PASS, exit 0: 604 passed, 5 skipped in 168.23s |
-| `uv run --frozen --extra dev ruff check proofofwork tests` | PASS, exit 0: All checks passed |
-| `uv lock --check` | PASS, exit 0: lock resolves without dependency drift |
-| `uv run --frozen --extra dev python -m pytest -q tests/test_manager_integration.py tests/test_production_policies.py tests/test_integrity_integration.py tests/test_configured_suites.py tests/test_action.py tests/test_learn.py` | PASS, exit 0: 173 passed, 2 skipped |
-| `uv run --frozen --no-sync python -m pytest -q tests/test_manager_integration.py tests/test_sandbox.py` | Independent follow-up PASS, exit 0: 96 passed |
+Next: complete configured/per-suite coverage and JS toolchain requirements; integrate
+and validate all isolated execution stages with crash recovery; exercise real consumer
+Action workflows; then prepare rollout/release evidence. Protect launcher, policy,
+reviewed refs and signing authority outside candidate control throughout.
 
-Earlier integration failures included the missing collector `base_commit` connection,
-unwired strict policy, outdated learning assumptions, stale policy expectations during
-concurrent edits, and one missing explicit subprocess `check=False`. These were fixed;
-the full-suite result above was obtained with stable implementation files.
-
-Docker tests validate requested argv, readiness and client/snapshot failure handling,
-not actual containment. Python integration tests execute reviewed temporary fixtures;
-JS coverage/report regressions model provider outputs. Action Bash tests validate actual
-argument forwarding and injection rejection, not a hosted consumer Action workflow.
-The full suite's five skips and platform-specific limits remain unverified behavior.
-
-After verification, restoring the original CRLF format of `uv.lock` and
-`tests/test_configured_suites.py` changed no normalized content. Final checks:
-
-- `uv run --frozen --extra dev python -m pytest -q tests/test_configured_suites.py tests/test_manager_integration.py`
-  — PASS, exit 0: 97 passed, 2 skipped in 15.98s.
-- `uv lock --check` — PASS, exit 0.
-- `uv run --frozen --extra dev ruff check proofofwork tests` — PASS, exit 0.
-- `git -c core.whitespace=cr-at-eol diff --check -- .github/workflows/self-check.yml README.md proofofwork pyproject.toml uv.lock tests/test_detector.py tests/test_gate_hardening.py tests/test_learn.py tests/test_runner.py`
-  — PASS: no whitespace diagnostics.
-
-## Follow-up order
-
-1. Review and commit the coverage-floor migration separately into the trusted base;
-   do not bootstrap from a candidate PR merely to make self-check pass.
-2. Finish/review the existing #27 configured-suite slice and related #30/#31 coverage
-   and JS toolchain requirements.
-3. Provision an approved Docker worker/image and finish #28 integration/validation
-   before supporting untrusted execution.
-4. Run #33 realistic consumer Action workflows, then prepare #35 release evidence.
-   Release/version/tag decisions and publication still require explicit authorization.
-
-See [coverage policy](coverage-policy.md), [integrity policy](integrity-policy.md),
-[experimental isolation](isolation.md), and [configured suites](configured-suites.md).
+See [coverage](coverage-policy.md), [integrity](integrity-policy.md),
+[configured suites](configured-suites.md), [isolation](isolation.md),
+[evaluation](evaluation.md) and [installation](installation.md).

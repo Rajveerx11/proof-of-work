@@ -5,7 +5,8 @@ slice only supplies an explicit backend. The gate's `--sandbox docker` selection
 fails closed before Git or candidate execution because runner integration is unavailable.
 `eval run --untrusted` and `run_task(..., untrusted=True)` likewise reject before execution.
 Default `local` execution remains trusted
-and can access host files, environment and network.
+and can access host files, environment and network. This backend is unreleased source
+functionality; see [installation](installation.md) and [current status](production-hardening-status.md).
 
 ## API and prerequisites
 
@@ -109,10 +110,11 @@ modules, conftest/plugins, witnesses and reports can be forged. The generic
 backend does not validate a trusted test entrypoint, assertion execution or
 coverage integrity. Those are separate manager-owned integration requirements.
 
-## Required manager integration (no edits outside backend ownership)
+## Required integration before untrusted execution
 
-Manager: retain ownership of engine/runner/CLI/types/Action/eval; no edits to those
-paths are requested from this backend worker.
+The engine, runners, CLI, Action and eval lifecycle are not routed through this
+backend. A complete integration must preserve the following boundaries rather
+than simply accepting a Docker selector.
 
 1. Explicitly select `get_sandbox(kind="docker", image=...)`, label execution mode,
    and block backend/setup/disposal errors without local fallback.
