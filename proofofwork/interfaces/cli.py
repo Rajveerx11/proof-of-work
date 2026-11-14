@@ -1,6 +1,6 @@
 """Command-line surface for Proof-of-Work.
 
-The exit code IS the enforcement contract: 0 = passed, 1 = failed. The agent
+The exit code IS the enforcement contract: 0 = passed, 1 = failed, 3 = tool error. The agent
 that called "done" cannot reinterpret a nonzero exit — the hook/CI blocks on it.
 """
 from __future__ import annotations
@@ -18,6 +18,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
         root=args.root,
         base_ref=args.base,
         suite_base=args.suite_base,
+        suites_file=args.suites_file,
+        include_untracked=args.include_untracked,
         staged=args.staged,
         run_tests=not args.no_tests,
         run_mutation=args.mutation,
@@ -40,7 +42,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         for f in verdict.findings:
             print(f"  [{f.severity.value}] {f.rule}: {f.message} ({f.file}:{f.line})")
 
-    return 0 if verdict.passed else 1
+    return 3 if verdict.tool_error else 0 if verdict.passed else 1
 
 
 def _cmd_install_hook(args: argparse.Namespace) -> int:
@@ -327,7 +329,11 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--base", default="HEAD")
     c.add_argument("--suite-base", default=None,
                    help="explicit reviewed ref for .proofofwork/suites.json (commit-pinned)")
+    c.add_argument("--suites-file", default=None,
+                   help="operator-owned suite JSON; overrides repository suites and --suite-base")
     c.add_argument("--staged", action="store_true")
+    c.add_argument("--include-untracked", action="store_true",
+                   help="include non-ignored untracked files without writing Git metadata")
     c.add_argument("--no-tests", action="store_true", help="detector-only evidence; no test/coverage pass")
     c.add_argument("--measure-base-coverage", action="store_true",
                    help="measure a missing baseline at the frozen base with matching dependencies")
@@ -434,8 +440,25 @@ def main(argv: list[str] | None = None) -> int:
     # ponytail: default to `check` when no subcommand given — the common case.
     if not argv or (argv[0] not in _SUBCOMMANDS and argv[0] not in ("-h", "--help")):
         argv = ["check", *argv]
-    args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        if argv[0] == "check" and exc.code:
+            raise SystemExit(3) from None
+        raise
+    if args.cmd != "check":
+        return args.func(args)
+    try:
+        return args.func(args)
+    except Exception as exc:  # noqa: BLE001 - the CLI must distinguish crashes from verdict failures
+        from ..types import Verdict
+
+        detail = f"check could not produce a verdict: {type(exc).__name__}: {exc}"
+        if args.json:
+            print(json.dumps(Verdict(passed=False, tool_error=detail).as_dict(), indent=2))
+        else:
+            print(detail, file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

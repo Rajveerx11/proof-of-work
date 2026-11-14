@@ -57,6 +57,15 @@ interpreters and programs may access files, launch subprocesses or perform netwo
 
 ## Explicit trusted base
 
+Alternatively, `check --suites-file /operator/suites.json --coverage-policy test-only`
+loads the same schema from a path supplied by the operator. It overrides repository suite
+configuration and `--suite-base`, including an invalid suite ref. Relative paths
+resolve from the caller's current directory. Keep the file outside the candidate's
+writable mounts; the flag does not establish file ownership. Configuration is read
+before candidate code runs. `tests.suite_base` is empty in this mode because no Git
+commit supplied the suites. Existing coverage-floor restrictions still apply.
+See the [agent integration contract](agent-integration.md).
+
 ```bash
 proof-of-work check --root . --base origin/main --suite-base origin/main --coverage-policy test-only --json
 proof-of-work check --root . --staged --suite-base origin/main --coverage-policy test-only --json
