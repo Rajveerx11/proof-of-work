@@ -4,11 +4,19 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
-These changes are merged source functionality, not a new tagged/PyPI release.
-The source package version remains 0.2.0; verify the installed Git commit.
+This section describes unreleased 0.3.0 source functionality. No 0.3.0 tag, PyPI
+publication or GitHub release has been created by this hardening change. Verify
+the installed Git commit as well as the package version.
 
 ### Added
 
+- `check --include-untracked` reads non-ignored new files without changing Git
+  metadata. It cannot combine with `--staged`.
+- `check --suites-file PATH` loads operator-owned suite definitions with the same
+  argv validation, overriding repository configuration and `--suite-base`.
+- Check JSON schema version 1 adds `schema_version`, `tool_version`, `base_commit`
+  and `tool_error`. Exit 3 distinguishes tool errors from a failed verdict (1).
+  See the [integration contract](docs/agent-integration.md).
 - Explicit reviewed configured suites for multiple packages, with required command
   statuses and exit-code evidence; configured coverage remains unsupported.
 - Strict required-coverage evidence, immutable trusted-baseline capture and explicit
@@ -28,6 +36,11 @@ The source package version remains 0.2.0; verify the installed Git commit.
 
 ### Fixed
 
+- Git commands time out after 60 seconds. Failed worktree creation explains the
+  writable Git metadata requirement and returns CLI exit 3. Read-only Git base
+  measurement and staged execution remain unsupported; no fallback runs.
+- Regression tests cover Git failure paths and explicit-SHA baseline selection,
+  which already failed closed and used committed baselines in the audited source.
 - Trusted coverage-baseline families remain required for docs/workflow-only changes
   and augment, rather than replace, changed-language requirements.
 - Docker preflight rejects missing, false or malformed resource-capability support

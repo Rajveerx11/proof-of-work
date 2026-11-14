@@ -98,7 +98,8 @@ are supported at v1.
 
 ## Usage
 
-Three surfaces, one engine. The **exit code is the contract** (`0` pass, `1` fail):
+Three surfaces, one engine. Source `check` exits `0` for pass, `1` for verdict fail,
+and `3` for a tool error. See the [JSON and agent integration contract](docs/agent-integration.md).
 
 - **CLI:** `proof-of-work check` (bare `proof-of-work` runs it too).
 - **Git hook:** `proof-of-work install-hook` writes a `pre-commit` hook that runs
@@ -116,6 +117,8 @@ Source-tree flags include `--staged`, `--base <ref>`, `--suite-base <reviewed-re
 `--integrity-policy strict|advisory`, `--no-tests`, `--mutation`,
 `--update-baseline`, `--json`, `--judge` and `--db <path>`. Run `check --help` on
 **your installed revision**; not all source flags exist in v0.2.0.
+`--include-untracked` adds new files to analysis. `--suites-file <path>` loads suites
+from an operator-supplied file.
 
 **Unreleased source-tree hardening:** checks now default to `--coverage-policy required`
 and `--integrity-policy strict`. Required coverage blocks missing/stale/invalid reports
