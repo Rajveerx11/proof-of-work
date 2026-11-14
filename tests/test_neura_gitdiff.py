@@ -42,10 +42,9 @@ def test_untracked_is_opt_in_and_preserves_git_metadata(repo):
     assert metadata(repo) == before
 
 
-@pytest.mark.parametrize("name", ["space name.py", "-option.py", "unicodé.py", "tab\tname.py"])
+@pytest.mark.parametrize("name", ["space name.py", "-option.py", "unicodé.py",
+                                  "bracket[name].py" if os.name == "nt" else "tab\tname.py"])
 def test_untracked_paths_and_raw_bytes(repo, name):
-    if os.name == "nt" and "\t" in name:
-        pytest.skip("Windows cannot create tab filenames")
     (repo / name).write_bytes(b"first\r\nlast\xff")
     file, = gitdiff.collect_diff(str(repo), include_untracked=True).files
     assert file.path == name
@@ -76,10 +75,7 @@ def test_untracked_rejects_staged_mode(repo):
 def test_untracked_symlink_reads_link_not_target(repo, tmp_path):
     external = tmp_path / "outside.py"
     external.write_text("must not be read\n")
-    try:
-        (repo / "link.py").symlink_to(external)
-    except OSError:
-        pytest.skip("symlink creation unavailable")
+    (repo / "link.py").symlink_to(external)
     file, = gitdiff.collect_diff(str(repo), include_untracked=True).files
     assert file.added == [os.readlink(repo / "link.py")]
     assert "must not be read" not in file.added
@@ -108,8 +104,6 @@ def test_worktree_failure_explains_read_only_git(monkeypatch, repo):
 
 
 def test_untracked_collection_with_nonwritable_git(repo):
-    if os.name == "nt":
-        pytest.skip("POSIX permission test; Windows metadata invariance tested separately")
     (repo / "new.py").write_text("answer = 42\n")
     paths = [repo / ".git", *(repo / ".git").rglob("*")]
     modes = {path: path.stat().st_mode for path in paths}
@@ -117,8 +111,6 @@ def test_untracked_collection_with_nonwritable_git(repo):
     try:
         for path in paths:
             path.chmod(modes[path] & ~0o222)
-        if os.access(repo / ".git", os.W_OK):
-            pytest.skip("current user bypasses POSIX write permissions")
         file, = gitdiff.collect_diff(str(repo), include_untracked=True).files
         assert file.path == "new.py"
         assert metadata(repo) == before

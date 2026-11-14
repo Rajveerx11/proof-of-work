@@ -205,19 +205,23 @@ def test_worktree_setup_errors_are_specific_and_distinct(repo, capsys, monkeypat
 
 @pytest.mark.parametrize("staged", [False, True])
 def test_real_nonwritable_git_base_measurement(repo, capsys, staged):
-    if os.name == "nt":
-        pytest.skip("POSIX permission test; mocked failure also runs on Windows")
     paths = [repo / ".git", *(repo / ".git").rglob("*")]
     modes = {path: path.stat().st_mode for path in paths}
     try:
         for path in paths:
             path.chmod(modes[path] & ~0o222)
         if os.access(repo / ".git", os.W_OK):
-            pytest.skip("current user bypasses POSIX write permissions")
-        options = ["--staged", "--coverage-policy", "test-only"] if staged else ["--measure-base-coverage"]
-        code, data = invoke(repo, capsys, *options)
-        assert code == 3 and not data["passed"]
-        assert "read-only .git" in data["tool_error"]
+            # Windows readonly attributes/root do not enforce POSIX directory permissions.
+            before = git_fixtures.metadata(repo)
+            code, data = invoke(repo, capsys, "--no-tests", "--include-untracked")
+            assert code == 0 and data["passed"]
+            assert git_fixtures.metadata(repo) == before
+        else:
+            options = (["--staged", "--coverage-policy", "test-only"] if staged
+                       else ["--measure-base-coverage"])
+            code, data = invoke(repo, capsys, *options)
+            assert code == 3 and not data["passed"]
+            assert "read-only .git" in data["tool_error"]
     finally:
         for path, mode in modes.items():
             path.chmod(mode)
