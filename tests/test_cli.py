@@ -46,7 +46,7 @@ def test_default_subcommand(monkeypatch):
 def test_bad_ref_cli_fails_closed_in_json(tmp_path, capsys):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     assert cli.main(["check", "--root", str(tmp_path), "--base", "missing-ref",
-                     "--no-tests", "--json"]) == 1
+                     "--no-tests", "--json"]) == 3
     data = json.loads(capsys.readouterr().out)
     assert data["passed"] is False
     assert data["findings"][0]["rule"] == "git-diff"

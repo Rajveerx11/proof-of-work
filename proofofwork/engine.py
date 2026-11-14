@@ -90,10 +90,11 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
           extra_findings: list[Finding] | None = None,
           suite_base: str | None = None, coverage_policy: str = "required",
           integrity_policy: str = "strict", sandbox_kind: str = "local",
-          sandbox_image: str | None = None, measure_base_coverage: bool = False) -> Verdict:
+          sandbox_image: str | None = None, measure_base_coverage: bool = False,
+          include_untracked: bool = False, suites_file: str | None = None) -> Verdict:
     """Run the full gate against a changeset and return a fact-based Verdict."""
     from .core.detector import ALL_CHECKS
-    from .core.gitdiff import _git, collect_diff
+    from .core.gitdiff import GitError, _git, collect_diff
 
     root = os.path.abspath(root)
     if integrity_policy not in ("strict", "advisory"):
@@ -118,7 +119,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                        execution_mode=execution_mode, coverage_status=coverage_status)
 
     try:
-        diff = collect_diff(root, base_ref, staged=staged)
+        diff = collect_diff(root, base_ref, staged=staged,
+                            **({"include_untracked": True} if include_untracked else {}))
         if db_path is None:
             # Staged checks may not add log files to the working tree. An explicit
             # --db path is caller-requested output and is used unchanged.
@@ -128,6 +130,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     except Exception as exc:  # noqa: BLE001 - git failures must not become empty passing diffs
         detail = f"cannot collect git diff: {exc}"
         return Verdict(passed=False, reasons=[f"BLOCK git-diff: {detail}"],
+                       tool_error=detail,
                        findings=[Finding("git-diff", Severity.BLOCK, detail)],
                        coverage_policy=coverage_policy, integrity_policy=integrity_policy,
                        execution_mode=execution_mode, coverage_status=coverage_status)
@@ -143,6 +146,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
     baseline_source = ""
     measured_base = None
     baseline_measurements = {}
+    tool_error = ""
     try:
         existing_baseline, coverage_baseline, baseline_metadata = _capture_coverage_baseline(
             root, diff, base_ref, staged)
@@ -155,6 +159,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     and families in (["python"], ["js"], ["js", "python"])):
                 execution_languages.update(families)
     except Exception as exc:  # noqa: BLE001 - policy capture failures cannot permit an opt-out
+        if isinstance(exc, GitError):
+            tool_error = str(exc)
         execution_allowed = False
         findings.append(Finding("coverage-baseline-error", Severity.BLOCK, str(exc)))
     if coverage_policy == "test-only":
@@ -184,7 +190,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                                 "it cannot combine with staged/bootstrap/test-only modes"))
 
     # Freeze configured policy and its secondary baseline restrictions before detectors.
-    configured = suite_base is not None
+    configured = suites_file is not None or suite_base is not None
     suites = None
     commit = ""
     try:
@@ -193,15 +199,21 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             root, staged=staged,
             changed_paths=[path for f in diff.files for path in (f.path, f.old_path) if path])
     except Exception as exc:  # noqa: BLE001 - config discovery failures cannot select fallback
+        if isinstance(exc, GitError):
+            tool_error = str(exc)
         configured = True
         findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
     if configured:
         tests = TestResult(framework="configured", evidence="exit-code")
+        reviewed_suites = None
         try:
-            from .core.suites import check_coverage_policy, load_suites
-            if not suite_base:
+            from .core.suites import check_coverage_policy, load_suites, load_suites_file
+            if suites_file is not None:
+                reviewed_suites = load_suites_file(suites_file)
+            elif not suite_base:
                 raise ValueError("configured suites require explicit --suite-base REF")
-            commit, reviewed_suites = load_suites(root, suite_base)
+            else:
+                commit, reviewed_suites = load_suites(root, suite_base)
             tests.suite_base = commit
             tests.required_suites = [suite["id"] for suite in reviewed_suites]
             if existing_baseline:
@@ -215,6 +227,9 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                 raise ValueError("all configured suites are required; --no-tests is unsupported")
             suites = reviewed_suites
         except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - fail closed
+            if ((suites_file is not None and reviewed_suites is None)
+                    or isinstance(exc, GitError)):
+                tool_error = f"cannot load configured suites: {exc}"
             findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
 
     if measure_base_coverage and configured:
@@ -240,6 +255,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             baseline_measurements = _coverage_measurements(measured_base)
             baseline_source = "measured:" + diff.base_commit
         except Exception as exc:  # noqa: BLE001 - an unmeasurable base never permits fallback
+            if isinstance(exc, GitError):
+                tool_error = str(exc)
             execution_allowed = False
             findings.append(Finding("coverage-base-unavailable", Severity.BLOCK, str(exc)))
 
@@ -267,6 +284,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                 "reviewed commands provide exit-code test-execution evidence only; "
                 "coverage and whole-candidate/launcher attestation are unsupported"))
         except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - fail closed
+            if isinstance(exc, GitError):
+                tool_error = str(exc)
             findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
     if run_tests and not configured and execution_allowed:
         from .core.detector.coverage_delta import (
@@ -333,6 +352,8 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     if not complete:
                         raise ValueError("--update-baseline requires passing tests with all coverage metrics")
         except Exception as exc:  # noqa: BLE001 - execution and baseline errors fail closed
+            if isinstance(exc, GitError):
+                tool_error = str(exc)
             findings.append(Finding("test-execution-error", Severity.BLOCK, str(exc)))
     if coverage_policy == "test-only":
         # Opt-out evidence must never retain apparently verified measurement numbers.
@@ -390,6 +411,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                       coverage_policy=coverage_policy, integrity_policy=integrity_policy,
                       execution_mode=execution_mode, coverage_status=coverage_status,
                       coverage_baseline_source=baseline_source,
+                      base_commit=diff.base_commit, tool_error=tool_error,
                       coverage_baseline_measurements=baseline_measurements)
 
     try:  # a passing signed verdict requires a durable log record
@@ -412,6 +434,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
         verdict.passed = False
         verdict.coverage_status = "not-verified" if run_tests else "not-run"
         verdict.entry_hash = ""
+        verdict.tool_error = verdict.tool_error or f"cannot record verdict: {e}"
         verdict.reasons.append(f"BLOCK log-unavailable: {e}")
 
     return verdict

@@ -73,7 +73,16 @@ def load_suites(root: str, reference: str) -> tuple[str, list[dict]]:
     entry = _git(root, "ls-tree", commit, "--", CONFIG).strip()
     if not entry.startswith(("100644 blob ", "100755 blob ")):
         raise ValueError("trusted suite configuration missing or not a regular file")
-    config = json.loads(_git(root, "show", f"{commit}:{CONFIG}"), object_pairs_hook=_unique)
+    return commit, _parse_suites(_git(root, "show", f"{commit}:{CONFIG}"))
+
+
+def load_suites_file(path: str) -> list[dict]:
+    """Snapshot an operator-owned configuration before any candidate execution."""
+    return _parse_suites(Path(path).read_text(encoding="utf-8"))
+
+
+def _parse_suites(content: str) -> list[dict]:
+    config = json.loads(content, object_pairs_hook=_unique)
     if (not isinstance(config, dict) or set(config) != {"version", "suites"}
             or type(config["version"]) is not int or config["version"] != 1
             or not isinstance(config["suites"], list) or not config["suites"]):
@@ -106,7 +115,7 @@ def load_suites(root: str, reference: str) -> tuple[str, list[dict]]:
             raise ValueError(f"{sid}: timeout must be 1..600 seconds")
         if suite["evidence"] != "exit-code":
             raise ValueError(f"{sid}: only explicit exit-code evidence is supported")
-    return commit, config["suites"]
+    return config["suites"]
 
 
 def check_coverage_policy(root: str, commit: str, *, base_ref: str, staged: bool,
@@ -116,8 +125,10 @@ def check_coverage_policy(root: str, commit: str, *, base_ref: str, staged: bool
 
     if update_baseline:
         raise ValueError("configured exit-code suites do not support --update-baseline")
-    refs = {commit, _git(root, "rev-parse", "--verify", "--end-of-options",
-                         f"{base_ref}^{{commit}}").strip()}
+    refs = {_git(root, "rev-parse", "--verify", "--end-of-options",
+                 f"{base_ref}^{{commit}}").strip()}
+    if commit:
+        refs.add(commit)
     if staged:
         refs.add(_git(root, "rev-parse", "--verify", "HEAD^{commit}").strip())
     for ref in refs:
