@@ -6,10 +6,13 @@ use a no-renames patch for the entire destination; staged diffs use only the ind
 """
 from __future__ import annotations
 
+import difflib
 import fnmatch
 import os
 import re
+import stat
 import subprocess
+from pathlib import Path
 
 from ..types import Diff, DiffFile
 
@@ -62,18 +65,27 @@ def _test_discovery(path: str) -> str:
     return ""
 
 
+class GitError(RuntimeError):
+    """Git could not supply the evidence needed by the gate."""
+
+
 def _git(root: str, *args: str) -> str:
     """Run git plumbing; raise on errors so an incomplete diff cannot pass."""
     try:
         cp = subprocess.run(
             ["git", "-c", "core.quotepath=false", "-c", "diff.suppressBlankEmpty=false", *args],
-            cwd=root, capture_output=True, check=False,
+            cwd=root, capture_output=True, check=False, timeout=60,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise GitError("git command exceeded 60 seconds") from exc
     except (OSError, ValueError) as exc:
-        raise RuntimeError(f"git unavailable: {exc}") from exc
+        raise GitError(f"git unavailable: {exc}") from exc
     if cp.returncode != 0:
         detail = cp.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+        if args[:2] == ("worktree", "add"):
+            detail += ("; worktree creation requires writable Git metadata; "
+                       "read-only .git is unsupported for base measurement/staged execution")
+        raise GitError(f"git {' '.join(args)} failed: {detail}")
     # No universal newline conversion: CRs may belong to NUL-delimited paths.
     return cp.stdout.decode("utf-8", errors="surrogateescape")
 
@@ -217,7 +229,10 @@ def parse_patch(text: str) -> Diff:
     return Diff(files=files)
 
 
-def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> Diff:
+def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False,
+                 include_untracked: bool = False) -> Diff:
+    if staged and include_untracked:
+        raise ValueError("--include-untracked cannot combine with --staged")
     # Resolve first: an option-looking ref (e.g. --quiet) must not change git diff's
     # behavior or turn a real changeset into an empty passing diff.
     commit = _git(root, "rev-parse", "--verify", "--end-of-options",
@@ -264,4 +279,53 @@ def collect_diff(root: str, base_ref: str = "HEAD", *, staged: bool = False) -> 
             candidate_lines=(copy_context if status == "C" else context).get(path, (None, []))[0],
             added_line_numbers=(copy_context if status == "C" else context).get(path, (None, []))[1],
         ))
+    if include_untracked:
+        _include_untracked(root, files)
     return Diff(files=files, base_ref=base_ref, base_commit=commit)
+
+
+def _include_untracked(root: str, files: list[DiffFile]) -> None:
+    """Read non-ignored additions without modifying Git metadata or following links."""
+    from .suites import contained
+
+    paths = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    if paths and not paths.endswith("\0"):
+        raise ValueError("unterminated Git untracked paths")
+    for path in paths.split("\0")[:-1]:
+        target = Path(root) / path
+        contained(root, str(Path(path).parent).replace(os.sep, "/"))
+        mode = target.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            content = os.fsencode(os.readlink(target))
+        elif stat.S_ISREG(mode):
+            # O_NONBLOCK also prevents a replaced file/FIFO from hanging the gate.
+            fd = os.open(target, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ValueError(f"untracked path is not a regular file: {path}")
+                content = stream.read()
+        else:
+            raise ValueError(f"unsupported untracked file type: {path}")
+        lines = content.decode("utf-8", "surrogateescape").split("\n")
+        if lines[-1] == "":
+            lines.pop()
+        previous = next((file for file in files if file.path == path), None)
+        if previous is not None:
+            # A staged deletion can leave an untracked replacement at the same path.
+            if previous.status != "D":
+                raise ValueError(f"ambiguous tracked/untracked path: {path}")
+            files.remove(previous)
+        before = previous.removed if previous else []
+        added, removed, numbers = [], [], []
+        for tag, i, j, k, end in difflib.SequenceMatcher(None, before, lines, autojunk=False).get_opcodes():
+            if tag in ("replace", "delete"):
+                removed.extend(before[i:j])
+            if tag in ("replace", "insert"):
+                added.extend(lines[k:end])
+                numbers.extend(range(k + 1, end + 1))
+        if previous and not added and not removed:
+            continue
+        files.append(DiffFile(path=path, status="M" if previous else "A", added=added,
+                              removed=removed, is_test=_is_test(path), language=_language(path),
+                              candidate_lines=lines, added_line_numbers=numbers))
