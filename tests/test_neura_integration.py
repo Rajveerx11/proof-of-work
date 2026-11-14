@@ -99,7 +99,7 @@ def test_unexpected_engine_crash_has_no_traceback(monkeypatch, capsys, json_outp
 def external_config(tmp_path, *, exit_code=0):
     path = tmp_path / "trusted-suites.json"
     path.write_text(json.dumps({"version": 1, "suites": [{
-        "id": "operator", "cwd": ".", "argv": ["node", "-e", f"process.exit({exit_code})"],
+        "id": "operator", "cwd": ".", "argv": ["python", "-c", f"raise SystemExit({exit_code})"],
         "prerequisites": [], "timeout": 5, "evidence": "exit-code",
     }]}), encoding="utf-8")
     return path
@@ -240,3 +240,61 @@ def test_log_failure_cannot_report_pass_or_verdict_failure(repo, capsys, monkeyp
     if broken:
         assert "log not writable" in data["tool_error"]
         assert data["entry_hash"] == ""
+
+
+@pytest.mark.parametrize("scenario,expected", [
+    ("malformed", 3), ("missing", 3), ("no-ref", 3),
+    ("valid", 0), ("policy", 1), ("test-failed", 1),
+])
+def test_committed_suite_load_errors_are_distinct_from_verdicts(repo, tmp_path, capsys, scenario, expected):
+    path = external_config(tmp_path, exit_code=7 if scenario == "test-failed" else 0)
+    config = repo / suites.CONFIG
+    config.parent.mkdir()
+    if scenario != "missing":
+        config.write_bytes(b"malformed" if scenario == "malformed" else path.read_bytes())
+    gitdiff._git(str(repo), "add", "-A")
+    gitdiff._git(str(repo), "commit", "--allow-empty", "-qm", "suite policy")
+    options = [] if scenario == "no-ref" else ["--suite-base", "HEAD"]
+    code, data = invoke(repo, capsys, *options, "--coverage-policy",
+                        "required" if scenario == "policy" else "test-only")
+    assert code == expected
+    assert data["passed"] is (expected == 0)
+    assert bool(data["tool_error"]) is (expected == 3)
+    assert data["tests"]["ran"] is (scenario in {"valid", "test-failed"})
+
+
+@pytest.mark.parametrize("dependency_state,passed,expected", [
+    ("missing", True, 3), ("not-ignored", True, 3),
+    ("installed", True, 0), ("installed", False, 1),
+])
+@pytest.mark.parametrize("staged", [False, True])
+def test_staged_dependencies_distinguish_setup_from_test_failure(
+        repo, capsys, monkeypatch, dependency_state, passed, expected, staged):
+    (repo / "package.json").write_text('{"private": true}')
+    (repo / "package-lock.json").write_text('{}')
+    (repo / "app.js").write_text("const value = 1;\n")
+    gitdiff._git(str(repo), "add", "-A")
+    gitdiff._git(str(repo), "commit", "-qm", "base dependency inputs")
+    (repo / "app.js").write_text("const value = 2;\n")
+    if dependency_state != "missing":
+        packages = repo / "node_modules"
+        packages.mkdir()
+        (packages / "dependency.js").write_text("module.exports = {};\n")
+    if dependency_state == "installed":
+        (repo / ".gitignore").write_text("node_modules/\n.proofofwork/log*\n")
+    gitdiff._git(str(repo), "add", "app.js", ".gitignore")
+    executions = []
+
+    def run(*args, **kwargs):
+        executions.append(args)
+        return TestResult(ran=True, passed=passed, framework="jest", coverage=100)
+
+    monkeypatch.setattr("proofofwork.core.runner.run_tests", run)
+    options = ["--staged", "--coverage-policy", "test-only"] if staged else ["--measure-base-coverage"]
+    code, data = invoke(repo, capsys, *options)
+    assert code == expected
+    assert data["passed"] is (expected == 0)
+    assert bool(data["tool_error"]) is (expected == 3)
+    assert bool(executions) is (dependency_state == "installed")
+    if expected == 3:
+        assert "node_modules" in data["tool_error"]

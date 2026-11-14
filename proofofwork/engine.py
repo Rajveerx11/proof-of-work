@@ -19,6 +19,10 @@ from .types import Diff, Finding, MutationResult, Severity, TestResult, Verdict
 DEFAULT_DB = ".proofofwork/log.db"
 
 
+class _DependencyUnavailable(ValueError):
+    """Installed dependencies cannot be supplied to an execution snapshot."""
+
+
 def _changeset_sha(diff) -> str:
     h = hashlib.sha256()
     h.update(diff.base_commit.encode("utf-8", "surrogateescape"))
@@ -227,8 +231,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                 raise ValueError("all configured suites are required; --no-tests is unsupported")
             suites = reviewed_suites
         except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - fail closed
-            if ((suites_file is not None and reviewed_suites is None)
-                    or isinstance(exc, GitError)):
+            if reviewed_suites is None or isinstance(exc, GitError):
                 tool_error = f"cannot load configured suites: {exc}"
             findings.append(Finding("suite-config-error", Severity.BLOCK, str(exc)))
 
@@ -255,7 +258,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
             baseline_measurements = _coverage_measurements(measured_base)
             baseline_source = "measured:" + diff.base_commit
         except Exception as exc:  # noqa: BLE001 - an unmeasurable base never permits fallback
-            if isinstance(exc, GitError):
+            if isinstance(exc, (GitError, _DependencyUnavailable)):
                 tool_error = str(exc)
             execution_allowed = False
             findings.append(Finding("coverage-base-unavailable", Severity.BLOCK, str(exc)))
@@ -352,7 +355,7 @@ def check(root: str = ".", base_ref: str = "HEAD", *, staged: bool = False,
                     if not complete:
                         raise ValueError("--update-baseline requires passing tests with all coverage metrics")
         except Exception as exc:  # noqa: BLE001 - execution and baseline errors fail closed
-            if isinstance(exc, GitError):
+            if isinstance(exc, (GitError, _DependencyUnavailable)):
                 tool_error = str(exc)
             findings.append(Finding("test-execution-error", Severity.BLOCK, str(exc)))
     if coverage_policy == "test-only":
@@ -737,11 +740,11 @@ def _prepare_staged_dependencies(root: str, snapshot: str, languages: set[str]) 
     if (not packages.is_dir() or packages.is_symlink()
             or not packages.resolve().is_relative_to(Path(root).resolve())
             or packages.resolve() == Path(root).resolve()):
-        raise ValueError("staged JS tests require installed, ignored node_modules")
+        raise _DependencyUnavailable("staged JS tests require installed, ignored node_modules")
     try:
         _git(root, "check-ignore", "--quiet", "--", "node_modules")
     except RuntimeError as exc:
-        raise ValueError("staged JS tests require ignored node_modules") from exc
+        raise _DependencyUnavailable("staged JS tests require ignored node_modules") from exc
     package_root = packages.resolve()
     for parent, dirs, files in os.walk(packages, followlinks=False):
         for name in (*dirs, *files):

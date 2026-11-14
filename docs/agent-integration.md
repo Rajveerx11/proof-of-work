@@ -57,7 +57,7 @@ argv validation is not a sandbox. The local backend is still labelled
 | --- | --- |
 | 0 | A passing verdict was produced. Inspect evidence scope: `--no-tests` is detector-only. |
 | 1 | The gate produced a failing verdict, such as a detector finding, test failure or rejected coverage policy. |
-| 3 | The check could not complete: Git failure/timeout, unusable arguments, external suite input error, failed Git snapshot setup, log failure or uncaught internal exception. |
+| 3 | The check could not complete: Git failure/timeout, unusable arguments, suite input error from either source, missing snapshot dependencies, failed Git snapshot setup, log failure or uncaught internal exception. |
 
 For caught tool errors, JSON retains `passed: false` and adds a nonempty
 `tool_error`. Existing findings and reasons are retained where available. Argument
