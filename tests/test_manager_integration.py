@@ -57,7 +57,7 @@ def test_cli_rejects_unknown_policy_without_execution(monkeypatch, flag):
     monkeypatch.setattr(engine, "check", forbidden)
     with pytest.raises(SystemExit) as error:
         cli.main(["check", flag, "unknown"])
-    assert error.value.code == 2
+    assert error.value.code == 3
 
 
 def test_docker_gate_fails_before_git_or_host_execution(monkeypatch, capsys):

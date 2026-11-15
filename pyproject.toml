@@ -1,6 +1,6 @@
 [project]
 name = "proof-of-work-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "Catch AI coding agents cheating on their work — verdict on facts, not opinions."
 readme = "README.md"
 authors = [{ name = "Rajveer Vadnal" }]

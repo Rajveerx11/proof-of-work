@@ -103,9 +103,17 @@ class Verdict:
 
     coverage_baseline_source: str = ""  # measured:<immutable commit> or trusted baseline source
     coverage_baseline_measurements: dict[str, float] = field(default_factory=dict)
+    base_commit: str = ""              # resolved diff base; empty if collection failed
+    tool_error: str = ""               # incomplete gate evidence; CLI exit 3
 
     def as_dict(self) -> dict:
+        from . import __version__
+
         return {
+            "schema_version": 1,
+            "tool_version": __version__,
+            "base_commit": self.base_commit,
+            "tool_error": self.tool_error,
             "passed": self.passed,
             "reasons": self.reasons,
             "findings": [f.as_dict() for f in self.findings],

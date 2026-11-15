@@ -3,8 +3,30 @@
 **Checkpoint: 2026-11-01, reviewed source `3612633`.** This is merged,
 **unreleased** hardening, not a production-readiness certification. The published
 release remains v0.2.0; installing that tag or PyPI package does not include all
-source-tree features described here. Package metadata on `main` also remains
-0.2.0. Use the [installation guide](installation.md) to verify the source commit.
+source-tree features described here. The Neura integration changes below set source
+package metadata to 0.3.0 without publishing it. Use the
+[installation guide](installation.md) to verify the source commit.
+
+## Unreleased Neura integration changes (2026-11-14)
+
+The [agent integration contract](agent-integration.md) adds optional analysis of
+untracked files without index writes, external suites, versioned JSON and
+distinct tool-error exit 3. External suites retain argv-only validation and cannot
+bypass a committed coverage floor. Explicit-SHA baseline reads and Git diff failure
+handling were already correct at the audited `04cf2c3`; regression tests preserve them.
+
+Base measurement and staged execution still use Git worktrees. If creation fails,
+the gate explains that those modes require writable Git metadata and exits 3.
+There is no archive fallback or claim of full read-only-Git execution support.
+Git commands now have a 60-second timeout; total diff size and execution cost
+remain unbounded. These changes add no runtime dependencies or networking.
+
+GitHub issue [#28](https://github.com/Rajveerx11/proof-of-work/issues/28) was **closed**
+when checked on 2026-11-14, contradicting this document's instruction below not to
+close it as complete. No issue state was changed. Full-stage isolation, external
+crash recovery and the supported-platform decision remain unverified here.
+Neura's external sandbox is responsible for confinement; these flags do not make
+host execution of an untrusted repository safe.
 
 ## Merged and verified
 

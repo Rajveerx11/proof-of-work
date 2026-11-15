@@ -465,7 +465,7 @@ def test_removed_config_never_falls_back_to_legacy(node_repo, capsys, operation,
         args.append("--staged")
     if not run_tests:
         args.append("--no-tests")
-    assert main(args) == 1
+    assert main(args) == 3
     cli_verdict = json.loads(capsys.readouterr().out)
     assert cli_verdict["tests"]["framework"] == "configured"
     assert not cli_verdict["tests"]["ran"]

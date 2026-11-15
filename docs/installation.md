@@ -4,8 +4,8 @@
 
 The latest published release is **v0.2.0**. The reviewed `main` branch contains
 **unreleased** coverage, integrity, configured-suite and Docker-backend hardening.
-Its package metadata still says `0.2.0`; that number alone cannot prove which
-source revision is installed. Installing current source does not publish a release.
+The Neura hardening source version is `0.3.0`, still unreleased; the version alone
+cannot prove which source revision is installed. Installing source does not publish it.
 See the [current status](production-hardening-status.md) and [changelog](../CHANGELOG.md).
 
 For the published release:
